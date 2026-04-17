@@ -1,0 +1,52 @@
+{
+  "expo": {
+    "name": "cloud_mobile",
+    "slug": "cloud_mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Allow Cloud Mobile to open your camera and save photos into your files.",
+        "NSMicrophoneUsageDescription": "Allow Cloud Mobile to use your microphone when recording videos."
+      }
+    },
+    "android": {
+      "package": "com.cloudmobile.app",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "plugins": [
+      "expo-dev-client",
+      "expo-camera",
+      "expo-sharing",
+      "@config-plugins/react-native-webrtc",
+      "expo-video"
+    ],
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "c7c5ef63-73c6-47a6-b924-21d8d9ae52e0"
+      }
+    },
+    "owner": "anosupermax"
+  }
+}
