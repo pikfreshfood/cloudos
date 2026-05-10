@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Platform, Text, PanResponder, Dimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
@@ -6,12 +6,26 @@ import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useOS } from '../context/OSContext';
 
-export default function BrowserScreen({ navigation }) {
+const DESKTOP_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36';
+
+export default function BrowserScreen({ navigation, route }) {
   const { getStorageDir, osType } = useOS();
-  const [url, setUrl] = useState(osType === 'ios' ? 'https://www.apple.com' : 'https://www.google.com');
-  const [inputUrl, setInputUrl] = useState('');
+  const defaultUrl = osType === 'ios' ? 'https://www.apple.com' : 'https://www.google.com';
+  const initialUrl = route?.params?.initialUrl || defaultUrl;
+  const initialInputUrl = route?.params?.initialInputUrl || initialUrl;
+  const browserMode = route?.params?.browserMode || 'default';
+  const minimalChrome = route?.params?.minimalChrome === true;
+  const showBottomMenu = route?.params?.showBottomMenu === true || !minimalChrome;
+  const pageTitle = route?.params?.pageTitle || 'Browser';
+  const [url, setUrl] = useState(initialUrl);
+  const [inputUrl, setInputUrl] = useState(initialInputUrl);
   const [loading, setLoading] = useState(false);
   const webViewRef = useRef(null);
+
+  useEffect(() => {
+    setUrl(initialUrl);
+    setInputUrl(initialInputUrl);
+  }, [initialInputUrl, initialUrl]);
   const iosHomePanResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => false,
@@ -27,7 +41,7 @@ export default function BrowserScreen({ navigation }) {
       ),
       onPanResponderRelease: (evt, gestureState) => {
         if (gestureState.dy < -35) {
-          navigation.navigate('RecentAppsScreen');
+          navigation.navigate('MainOS', { screen: 'RecentAppsScreen' });
         }
       }
     })
@@ -98,28 +112,42 @@ export default function BrowserScreen({ navigation }) {
         // --- iOS SAFARI UI ---
         <>
           {/* iOS Browser Header */}
-          <View style={styles.iosHeader}>
-            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iosHeaderBtn}>
-              <Text style={styles.iosCancelText}>Cancel</Text>
-            </TouchableOpacity>
-            <View style={styles.iosAddressBarContainer}>
-              <Ionicons name="text-outline" size={14} color="#8e8e93" style={styles.iosAAText} />
-              <Ionicons name="lock-closed" size={12} color="#8e8e93" style={styles.lockIcon} />
-              <TextInput
-                style={styles.iosAddressInput}
-                placeholder="Search or enter website"
-                placeholderTextColor="#8e8e93"
-                value={inputUrl}
-                onChangeText={setInputUrl}
-                onSubmitEditing={handleNavigate}
-                returnKeyType="go"
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-              <TouchableOpacity onPress={() => webViewRef.current?.reload()}>
-                <Ionicons name="refresh" size={16} color="#8e8e93" style={styles.iosRefreshIcon} />
-              </TouchableOpacity>
-            </View>
+          <View style={[styles.iosHeader, minimalChrome && styles.iosHeaderMinimal]}>
+            {minimalChrome ? (
+              <>
+                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iosHeaderBtn}>
+                  <Ionicons name="close-circle" size={28} color="#007aff" />
+                </TouchableOpacity>
+                <View style={{ flex: 1 }} />
+                <TouchableOpacity onPress={() => webViewRef.current?.reload()} style={styles.iosMinimalReload}>
+                  <Ionicons name="refresh" size={22} color="#007aff" />
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iosHeaderBtn}>
+                  <Text style={styles.iosCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <View style={styles.iosAddressBarContainer}>
+                  <Ionicons name="text-outline" size={14} color="#8e8e93" style={styles.iosAAText} />
+                  <Ionicons name="lock-closed" size={12} color="#8e8e93" style={styles.lockIcon} />
+                  <TextInput
+                    style={styles.iosAddressInput}
+                    placeholder="Search or enter website"
+                    placeholderTextColor="#8e8e93"
+                    value={inputUrl}
+                    onChangeText={setInputUrl}
+                    onSubmitEditing={handleNavigate}
+                    returnKeyType="go"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                  <TouchableOpacity onPress={() => webViewRef.current?.reload()}>
+                    <Ionicons name="refresh" size={16} color="#8e8e93" style={styles.iosRefreshIcon} />
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
           </View>
 
           {/* Browser View */}
@@ -132,6 +160,7 @@ export default function BrowserScreen({ navigation }) {
             <WebView
               ref={webViewRef}
               source={{ uri: url }}
+              userAgent={browserMode === 'desktop' ? DESKTOP_USER_AGENT : undefined}
               onLoadStart={() => setLoading(true)}
               onLoadEnd={() => setLoading(false)}
               onFileDownload={handleFileDownload}
@@ -140,23 +169,25 @@ export default function BrowserScreen({ navigation }) {
           </View>
 
           {/* iOS Safari Bottom Toolbar */}
-          <View style={styles.iosBottomToolbar}>
-            <TouchableOpacity onPress={() => webViewRef.current?.goBack()} style={styles.iosToolbarBtn}>
-              <Ionicons name="chevron-back" size={28} color="#007aff" />
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => webViewRef.current?.goForward()} style={styles.iosToolbarBtn}>
-              <Ionicons name="chevron-forward" size={28} color="#007aff" />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.iosToolbarBtn}>
-              <Ionicons name="share-outline" size={28} color="#007aff" />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.iosToolbarBtn}>
-              <Ionicons name="book-outline" size={28} color="#007aff" />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.iosToolbarBtn}>
-              <Ionicons name="browsers-outline" size={28} color="#007aff" />
-            </TouchableOpacity>
-          </View>
+          {!minimalChrome && (
+            <View style={styles.iosBottomToolbar}>
+              <TouchableOpacity onPress={() => webViewRef.current?.goBack()} style={styles.iosToolbarBtn}>
+                <Ionicons name="chevron-back" size={28} color="#007aff" />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => webViewRef.current?.goForward()} style={styles.iosToolbarBtn}>
+                <Ionicons name="chevron-forward" size={28} color="#007aff" />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.iosToolbarBtn}>
+                <Ionicons name="share-outline" size={28} color="#007aff" />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.iosToolbarBtn}>
+                <Ionicons name="book-outline" size={28} color="#007aff" />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.iosToolbarBtn}>
+                <Ionicons name="browsers-outline" size={28} color="#007aff" />
+              </TouchableOpacity>
+            </View>
+          )}
           <TouchableOpacity
             activeOpacity={1}
             onPress={() => navigation.navigate('RecentAppsScreen')}
@@ -170,37 +201,56 @@ export default function BrowserScreen({ navigation }) {
         // --- ANDROID BROWSER UI ---
         <>
           {/* Browser Header */}
-          <View style={styles.header}>
-            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconButton}>
-              <Ionicons name="home" size={20} color="#64748b" />
-            </TouchableOpacity>
-            
-            <View style={styles.navControls}>
-              <TouchableOpacity onPress={() => webViewRef.current?.goBack()} style={styles.iconButton}>
-                <Ionicons name="chevron-back" size={24} color="#64748b" />
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => webViewRef.current?.reload()} style={styles.iconButton}>
-                <Ionicons name="refresh" size={20} color="#64748b" />
-              </TouchableOpacity>
-            </View>
+          <View style={[styles.header, minimalChrome && styles.headerMinimal]}>
+            {minimalChrome ? (
+              <View style={styles.minimalHeaderActions}>
+                <TouchableOpacity onPress={() => webViewRef.current?.reload()} style={styles.minimalReloadButton}>
+                  <Ionicons name="refresh" size={20} color="#ffffff" />
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <>
+                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconButton}>
+                  <Ionicons name="home" size={20} color="#64748b" />
+                </TouchableOpacity>
+                
+                <View style={styles.navControls}>
+                  <TouchableOpacity onPress={() => webViewRef.current?.goBack()} style={styles.iconButton}>
+                    <Ionicons name="chevron-back" size={24} color="#64748b" />
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => webViewRef.current?.reload()} style={styles.iconButton}>
+                    <Ionicons name="refresh" size={20} color="#64748b" />
+                  </TouchableOpacity>
+                </View>
 
-            <View style={styles.addressBarContainer}>
-              <Ionicons name="lock-closed" size={14} color="#94a3b8" style={styles.lockIcon} />
-              <TextInput
-                style={styles.addressInput}
-                placeholder="Search or enter website"
-                value={inputUrl}
-                onChangeText={setInputUrl}
-                onSubmitEditing={handleNavigate}
-                returnKeyType="go"
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-              <TouchableOpacity onPress={handleNavigate} style={styles.goButton}>
-                <Ionicons name="arrow-forward-circle" size={24} color="#3b82f6" />
-              </TouchableOpacity>
-            </View>
+                <View style={styles.addressBarContainer}>
+                  <Ionicons name="lock-closed" size={14} color="#94a3b8" style={styles.lockIcon} />
+                  <TextInput
+                    style={styles.addressInput}
+                    placeholder="Search or enter website"
+                    value={inputUrl}
+                    onChangeText={setInputUrl}
+                    onSubmitEditing={handleNavigate}
+                    returnKeyType="go"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                  <TouchableOpacity onPress={handleNavigate} style={styles.goButton}>
+                    <Ionicons name="arrow-forward-circle" size={24} color="#3b82f6" />
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
           </View>
+
+          {!!route?.params?.pageTitle && (
+            <View style={styles.pageModeBanner}>
+              <Text style={styles.pageModeTitle}>{pageTitle}</Text>
+              {browserMode === 'desktop' ? (
+                <Text style={styles.pageModeSubtitle}>Desktop view enabled for QR sign-in</Text>
+              ) : null}
+            </View>
+          )}
 
           {/* Browser View */}
           <View style={styles.browserContainer}>
@@ -212,6 +262,7 @@ export default function BrowserScreen({ navigation }) {
             <WebView
               ref={webViewRef}
               source={{ uri: url }}
+              userAgent={browserMode === 'desktop' ? DESKTOP_USER_AGENT : undefined}
               onLoadStart={() => setLoading(true)}
               onLoadEnd={() => setLoading(false)}
               onFileDownload={handleFileDownload}
@@ -220,17 +271,19 @@ export default function BrowserScreen({ navigation }) {
           </View>
           
           {/* Bottom Navigation Bar */}
-          <View style={styles.bottomNav}>
-            <TouchableOpacity style={styles.navBtn} onPress={() => navigation.navigate('RecentAppsScreen')}>
-              <Ionicons name="menu" size={24} color="#64748b" />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.navBtn} onPress={() => navigation.navigate('DesktopScreen')}>
-              <Ionicons name="radio-button-off" size={24} color="#64748b" />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.navBtn} onPress={() => navigation.goBack()}>
-              <Ionicons name="chevron-back" size={24} color="#64748b" />
-            </TouchableOpacity>
-          </View>
+          {showBottomMenu && (
+            <View style={styles.bottomNav}>
+              <TouchableOpacity style={styles.navBtn} onPress={() => navigation.navigate('RecentAppsScreen')}>
+                <Ionicons name="menu" size={24} color="#64748b" />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.navBtn} onPress={() => navigation.navigate('DesktopScreen')}>
+                <Ionicons name="radio-button-off" size={24} color="#64748b" />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.navBtn} onPress={() => navigation.goBack()}>
+                <Ionicons name="chevron-back" size={24} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+          )}
         </>
       )}
     </SafeAreaView>
@@ -250,6 +303,25 @@ const styles = StyleSheet.create({
     backgroundColor: '#f8fafc',
     borderBottomWidth: 1,
     borderBottomColor: '#e2e8f0',
+  },
+  headerMinimal: {
+    justifyContent: 'flex-end',
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    backgroundColor: '#25D366',
+    borderBottomColor: '#22c55e',
+  },
+  minimalHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  minimalReloadButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.16)',
   },
   navControls: {
     flexDirection: 'row',
@@ -285,6 +357,24 @@ const styles = StyleSheet.create({
   browserContainer: {
     flex: 1,
     backgroundColor: '#ffffff',
+  },
+  pageModeBanner: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#ecfdf5',
+    borderBottomWidth: 1,
+    borderBottomColor: '#d1fae5',
+  },
+  pageModeTitle: {
+    color: '#065f46',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  pageModeSubtitle: {
+    color: '#047857',
+    fontSize: 12,
+    marginTop: 2,
+    fontWeight: '600',
   },
   webview: {
     flex: 1,
@@ -323,6 +413,20 @@ const styles = StyleSheet.create({
     backgroundColor: '#f8f8f8',
     borderBottomWidth: 1,
     borderBottomColor: '#d1d1d6',
+  },
+  iosHeaderMinimal: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    backgroundColor: '#f8f8f8',
+    borderBottomColor: '#e5e5ea',
+  },
+  iosMinimalReload: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f2f2f7',
   },
   iosHeaderBtn: {
     marginRight: 12,

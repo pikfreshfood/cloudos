@@ -2,13 +2,13 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Modal, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import * as Clipboard from 'expo-clipboard';
 import * as FileSystem from 'expo-file-system/legacy';
+import * as Clipboard from 'expo-clipboard';
 import { useOS } from '../context/OSContext';
 import { useAuth } from '../context/AuthContext';
 import { getDeviceStorageSnapshot } from '../utils/deviceStorage';
 import { STORAGE_UPGRADE_OPTIONS, formatNgn, formatStoragePlan } from '../constants/storagePlans';
-import { paystackService } from '../services/api';
+import { fileService, paystackService, messageService } from '../services/api';
 const EMPTY_STORAGE = { usedBytes: 0, maxBytes: 0, availableBytes: 0 };
 
 const formatStorageAmount = (bytes) => {
@@ -16,13 +16,14 @@ const formatStorageAmount = (bytes) => {
   if (mb >= 1024) {
     return `${(mb / 1024).toFixed(1)} GB`;
   }
-  return `${Math.max(mb, 0).toFixed(0)} MB`;
+  return `${Math.max(mb, 0).toFixed(2)} MB`;
 };
 
 export default function DashboardScreen({ navigation }) {
   const [showAddModal, setShowAddModal] = useState(false);
   const [upgradeDevice, setUpgradeDevice] = useState(null);
   const [storageSnapshots, setStorageSnapshots] = useState({});
+  const [unreadCounts, setUnreadCounts] = useState({});
   const { selectDevice } = useOS();
   const { currentUser, logout } = useAuth();
 
@@ -40,6 +41,26 @@ export default function DashboardScreen({ navigation }) {
       try {
         const entries = await Promise.all(
           phones.map(async (phone) => {
+            const maxBytes = Number(phone.storage || 500) * 1024 * 1024;
+            
+            try {
+              const apiResponse = await fileService.list({
+                userId: currentUser.id,
+                deviceId: phone.id,
+                folderPath: ''
+              });
+              
+              if (apiResponse.used_space !== undefined) {
+                return [phone.id, {
+                  usedBytes: apiResponse.used_space,
+                  maxBytes,
+                  availableBytes: Math.max(maxBytes - apiResponse.used_space, 0)
+                }];
+              }
+            } catch (apiError) {
+              console.log(`Failed to fetch API storage for device ${phone.id}, falling back to local snapshot.`);
+            }
+
             const baseDir = `${FileSystem.documentDirectory}users/${currentUser.id}/devices/${phone.id}/`;
             const snapshot = await getDeviceStorageSnapshot({ baseDir, device: phone });
             return [phone.id, snapshot];
@@ -56,6 +77,34 @@ export default function DashboardScreen({ navigation }) {
 
     loadStorageSnapshots();
 
+    const loadUnreadCounts = async () => {
+      if (!currentUser?.id || !phones.length) return;
+
+      try {
+        const entries = await Promise.all(
+          phones.map(async (phone) => {
+            if (!phone.phoneNumber) return [phone.id, 0];
+            try {
+              const response = await messageService.unreadCount({
+                userId: currentUser.id,
+                phoneNumber: phone.phoneNumber
+              });
+              return [phone.id, response.unread_count || 0];
+            } catch (err) {
+              return [phone.id, 0];
+            }
+          })
+        );
+        if (isMounted) {
+          setUnreadCounts(Object.fromEntries(entries));
+        }
+      } catch (error) {
+        console.error('Failed to load unread counts:', error);
+      }
+    };
+
+    loadUnreadCounts();
+
     return () => {
       isMounted = false;
     };
@@ -69,20 +118,6 @@ export default function DashboardScreen({ navigation }) {
   const handleLogout = async () => {
     await logout();
     navigation.replace('LoginScreen');
-  };
-
-  const handleCopyPhoneNumber = async () => {
-    if (!currentUser?.phoneNumber) {
-      Alert.alert('Unavailable', 'No phone number is available to copy yet.');
-      return;
-    }
-
-    try {
-      await Clipboard.setStringAsync(currentUser.phoneNumber);
-      Alert.alert('Copied', `${currentUser.phoneNumber} copied to clipboard.`);
-    } catch (error) {
-      Alert.alert('Copy failed', 'Could not copy the phone number right now.');
-    }
   };
 
   const handleUpgradeDevice = async (plan) => {
@@ -128,7 +163,7 @@ export default function DashboardScreen({ navigation }) {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <View>
-          <Text style={styles.headerTitle}>My Virtual Devices</Text>
+          <Text style={styles.headerTitle}>My Devices</Text>
           <Text style={styles.headerSubtitle}>
             {currentUser ? `${currentUser.name} controls these devices` : 'Sign in to manage your devices'}
           </Text>
@@ -154,13 +189,30 @@ export default function DashboardScreen({ navigation }) {
 
             <Text style={styles.phoneName}>{phone.name}</Text>
             <Text style={styles.deviceIdText}>ID: {phone.id}</Text>
-            <TouchableOpacity style={styles.phoneNumberBadge} onPress={handleCopyPhoneNumber} activeOpacity={0.8}>
-              <Ionicons name="call-outline" size={14} color="#0f766e" />
-              <Text style={styles.phoneNumberBadgeText}>
-                {currentUser?.phoneNumber || 'No number'}
-              </Text>
-              <Ionicons name="copy-outline" size={16} color="#0f766e" />
-            </TouchableOpacity>
+            
+            {unreadCounts[phone.id] > 0 && (
+              <View style={styles.unreadRow}>
+                <Ionicons name="chatbubble-ellipses" size={16} color="#3b82f6" />
+                <Text style={styles.unreadText}>
+                  {unreadCounts[phone.id]} unread message{unreadCounts[phone.id] === 1 ? '' : 's'}
+                </Text>
+              </View>
+            )}
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+              <Text style={[styles.devicePhoneText, { marginBottom: 0 }]}>Number: {phone.phoneNumber || 'Unavailable'}</Text>
+              {phone.phoneNumber ? (
+                <TouchableOpacity 
+                  style={{ marginLeft: 8 }} 
+                  onPress={async () => {
+                    await Clipboard.setStringAsync(phone.phoneNumber);
+                    Alert.alert('Copied', 'Phone number copied to clipboard.');
+                  }}
+                >
+                  <Ionicons name="copy-outline" size={16} color="#64748b" />
+                </TouchableOpacity>
+              ) : null}
+            </View>
             
             <View style={styles.badgesContainer}>
               <View style={styles.storageBadge}>
@@ -175,12 +227,7 @@ export default function DashboardScreen({ navigation }) {
               <Text style={styles.bootBtnText}>Boot Device</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.upgradeBtn}
-              onPress={() => setUpgradeDevice(phone)}
-            >
-              <Text style={styles.upgradeBtnText}>Upgrade Storage</Text>
-            </TouchableOpacity>
+
             </View>
           );
         })}
@@ -304,10 +351,7 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     borderWidth: 1,
     borderColor: '#f1f5f9',
-    shadowColor: '#0f172a',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.05,
-    shadowRadius: 20,
+    boxShadow: '0px 10px 20px rgba(15, 23, 42, 0.05)',
     elevation: 4,
   },
   phoneIllustration: {
@@ -321,10 +365,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 24,
     position: 'relative',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.3,
-    shadowRadius: 15,
+    boxShadow: '0px 10px 15px rgba(0, 0, 0, 0.3)',
     elevation: 8,
   },
   screenInner: {
@@ -353,29 +394,32 @@ const styles = StyleSheet.create({
     color: '#64748b',
     marginBottom: 12,
   },
+  unreadRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#eff6ff',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+    marginBottom: 16,
+    gap: 6,
+  },
+  unreadText: {
+    fontSize: 12,
+    color: '#2563eb',
+    fontWeight: 'bold',
+  },
+  devicePhoneText: {
+    fontSize: 13,
+    color: '#0f172a',
+    fontWeight: '700',
+    marginBottom: 12,
+  },
   badgesContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 24,
     gap: 8,
-  },
-  phoneNumberBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#ecfeff',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: '#a5f3fc',
-    marginBottom: 12,
-  },
-  phoneNumberBadgeText: {
-    color: '#0f766e',
-    fontSize: 14,
-    fontWeight: '700',
-    letterSpacing: 1,
   },
   storageBadge: {
     backgroundColor: '#eff6ff',
@@ -409,10 +453,7 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     borderRadius: 16,
     alignItems: 'center',
-    shadowColor: '#2563eb',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
+    boxShadow: '0px 4px 8px rgba(37, 99, 235, 0.3)',
     elevation: 4,
   },
   bootBtnText: {

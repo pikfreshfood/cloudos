@@ -1,12 +1,12 @@
 export const STORAGE_UPGRADE_OPTIONS = [
-  { storageMb: 512, priceNgn: 500 },
-  { storageMb: 1024, priceNgn: 1000 },
-  { storageMb: 2048, priceNgn: 1800 },
-  { storageMb: 4096, priceNgn: 2800 },
-  { storageMb: 8192, priceNgn: 4000 },
-  { storageMb: 16384, priceNgn: 5500 },
-  { storageMb: 32768, priceNgn: 6800 },
-  { storageMb: 65536, priceNgn: 8000 },
+  { storageMb: 2048, priceNgn: 500 },
+  { storageMb: 4096, priceNgn: 1000 },
+  { storageMb: 8192, priceNgn: 1800 },
+  { storageMb: 16384, priceNgn: 2800 },
+  { storageMb: 32768, priceNgn: 4000 },
+  { storageMb: 65536, priceNgn: 5500 },
+  { storageMb: 131072, priceNgn: 6800 },
+  { storageMb: 256000, priceNgn: 8000 },
 ];
 
 export const formatStoragePlan = (storageMb) => {

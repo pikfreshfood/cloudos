@@ -2,19 +2,22 @@ import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Dimensions, PanResponder, Animated, ImageBackground } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useLock } from '../context/LockContext';
 import { useWallpaper } from '../context/WallpaperContext';
 import { useMusicPlayer } from '../context/MusicPlayerContext';
 
 const { height } = Dimensions.get('window');
+const DEFAULT_BACKGROUND_COLORS = ['#020713', '#003f9e', '#0088e8', '#18d7ff'];
 
 export default function LockScreen({ navigation }) {
   const [time, setTime] = useState(new Date());
   const [isSwipedUp, setIsSwipedUp] = useState(false);
   const [pin, setPin] = useState([]);
+  const [pinError, setPinError] = useState('');
   const { verifyPin } = useLock();
   const { wallpaper } = useWallpaper();
-  const { currentTrack, isPlaying, togglePlayPause, playNext, playPrevious } = useMusicPlayer();
+  const { currentTrack, isPlaying, togglePlayPause, playNext, playPrevious, stopDevicePlayback } = useMusicPlayer();
   
   const slideAnim = useRef(new Animated.Value(0)).current;
 
@@ -31,11 +34,21 @@ export default function LockScreen({ navigation }) {
     return date.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
   };
 
+  const revealPinPad = () => {
+    Animated.timing(slideAnim, {
+      toValue: -height,
+      duration: 250,
+      useNativeDriver: true,
+    }).start(() => setIsSwipedUp(true));
+  };
+
   const handleUnlock = () => {
     if (verifyPin(pin.join(''))) {
+      setPinError('');
       navigation.replace('MainOS');
     } else {
       setPin([]);
+      setPinError('Wrong PIN. Try again.');
     }
   };
 
@@ -47,31 +60,29 @@ export default function LockScreen({ navigation }) {
 
   const handlePinPress = (num) => {
     if (pin.length < 4) {
+      setPinError('');
       setPin([...pin, num]);
     }
   };
 
   const handleBackspace = () => {
+    setPinError('');
     setPin(pin.slice(0, -1));
   };
 
   const panResponder = useRef(
     PanResponder.create({
       onMoveShouldSetPanResponder: (evt, gestureState) => {
-        return Math.abs(gestureState.dy) > 20;
+        return Math.abs(gestureState.dy) > Math.abs(gestureState.dx) && gestureState.dy < -10;
       },
       onPanResponderMove: (evt, gestureState) => {
         if (gestureState.dy < 0 && !isSwipedUp) {
-          slideAnim.setValue(gestureState.dy);
+          slideAnim.setValue(Math.max(gestureState.dy, -height));
         }
       },
       onPanResponderRelease: (evt, gestureState) => {
         if (gestureState.dy < -100) {
-          Animated.timing(slideAnim, {
-            toValue: -height,
-            duration: 300,
-            useNativeDriver: true,
-          }).start(() => setIsSwipedUp(true));
+          revealPinPad();
         } else {
           Animated.spring(slideAnim, {
             toValue: 0,
@@ -91,6 +102,8 @@ export default function LockScreen({ navigation }) {
             <View key={i} style={[styles.pinDot, pin.length > i && styles.pinDotActive]} />
           ))}
         </View>
+        {pinError ? <Text style={styles.pinError}>{pinError}</Text> : null}
+        <Text style={styles.pinHint}>Default PIN is 1234 unless you changed it in Settings.</Text>
 
         <View style={styles.keypad}>
           {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
@@ -112,8 +125,10 @@ export default function LockScreen({ navigation }) {
     );
 
     if (wallpaper) {
+      const wallpaperSource = typeof wallpaper === 'string' ? { uri: wallpaper } : wallpaper;
+
       return (
-        <ImageBackground source={{ uri: wallpaper }} style={styles.container} resizeMode="cover">
+        <ImageBackground source={wallpaperSource} style={styles.container} resizeMode="cover">
           <View style={styles.overlay}>
             {pinContent}
           </View>
@@ -121,9 +136,14 @@ export default function LockScreen({ navigation }) {
       );
     }
     return (
-      <View style={styles.container}>
+      <LinearGradient
+        colors={DEFAULT_BACKGROUND_COLORS}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.container}
+      >
         {pinContent}
-      </View>
+      </LinearGradient>
     );
   }
 
@@ -137,8 +157,18 @@ export default function LockScreen({ navigation }) {
       {currentTrack ? (
         <View style={styles.nowPlayingCard}>
           <View style={styles.nowPlayingHeader}>
-            <Ionicons name="musical-notes" size={18} color="#34d399" />
-            <Text style={styles.nowPlayingLabel}>Now Playing</Text>
+            <View style={styles.nowPlayingHeaderInfo}>
+              <Ionicons name="musical-notes" size={18} color="#34d399" />
+              <Text style={styles.nowPlayingLabel}>Now Playing</Text>
+            </View>
+            <TouchableOpacity
+              style={styles.nowPlayingCloseBtn}
+              onPress={() => stopDevicePlayback()}
+              accessibilityRole="button"
+              accessibilityLabel="Close music player"
+            >
+              <Ionicons name="close" size={18} color="#e2e8f0" />
+            </TouchableOpacity>
           </View>
           <Text style={styles.nowPlayingTitle} numberOfLines={1}>{currentTrack.title}</Text>
           <Text style={styles.nowPlayingArtist} numberOfLines={1}>{currentTrack.artist}</Text>
@@ -159,6 +189,9 @@ export default function LockScreen({ navigation }) {
       <View style={styles.unlockArea}>
         <Ionicons name="chevron-up" size={24} color="rgba(255,255,255,0.7)" />
         <Text style={styles.unlockText}>Swipe up to unlock</Text>
+        <TouchableOpacity style={styles.unlockButton} onPress={revealPinPad}>
+          <Text style={styles.unlockButtonText}>Tap to enter PIN</Text>
+        </TouchableOpacity>
       </View>
     </SafeAreaView>
   );
@@ -166,13 +199,20 @@ export default function LockScreen({ navigation }) {
   return (
     <Animated.View style={[styles.container, { transform: [{ translateY: slideAnim }] }]} {...panResponder.panHandlers}>
       {wallpaper ? (
-        <ImageBackground source={{ uri: wallpaper }} style={styles.container} resizeMode="cover">
+        <ImageBackground source={typeof wallpaper === 'string' ? { uri: wallpaper } : wallpaper} style={styles.container} resizeMode="cover">
           <View style={styles.overlay}>
             {lockContent}
           </View>
         </ImageBackground>
       ) : (
-        lockContent
+        <LinearGradient
+          colors={DEFAULT_BACKGROUND_COLORS}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.container}
+        >
+          {lockContent}
+        </LinearGradient>
       )}
     </Animated.View>
   );
@@ -207,7 +247,7 @@ const styles = StyleSheet.create({
   pinDots: {
     flexDirection: 'row',
     gap: 20,
-    marginBottom: 60,
+    marginBottom: 18,
   },
   pinDot: {
     width: 16,
@@ -219,6 +259,19 @@ const styles = StyleSheet.create({
   pinDotActive: {
     backgroundColor: '#ffffff',
     borderColor: '#ffffff',
+  },
+  pinError: {
+    color: '#fca5a5',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 10,
+  },
+  pinHint: {
+    color: '#cbd5e1',
+    fontSize: 13,
+    marginBottom: 28,
+    textAlign: 'center',
+    paddingHorizontal: 24,
   },
   keypad: {
     flexDirection: 'row',
@@ -261,7 +314,12 @@ const styles = StyleSheet.create({
   nowPlayingHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     marginBottom: 8,
+  },
+  nowPlayingHeaderInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   nowPlayingLabel: {
     color: '#a7f3d0',
@@ -270,6 +328,14 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     letterSpacing: 1,
     textTransform: 'uppercase',
+  },
+  nowPlayingCloseBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.08)',
   },
   nowPlayingTitle: {
     color: '#ffffff',
@@ -327,5 +393,20 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginTop: 8,
     letterSpacing: 1,
+  },
+  unlockButton: {
+    marginTop: 14,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.16)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+  },
+  unlockButtonText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
 });

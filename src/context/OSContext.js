@@ -1,27 +1,27 @@
 import React, { createContext, useState, useContext, useEffect, useMemo } from 'react';
+import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useAuth } from './AuthContext';
-
 const OSContext = createContext();
-
 export const OSProvider = ({ children }) => {
   const { currentUser } = useAuth();
   const [osType, setOsType] = useState('android'); // 'android' or 'ios'
   const [currentDeviceId, setCurrentDeviceId] = useState(null);
-
   const currentDevice = useMemo(
     () => currentUser?.devices?.find((device) => device.id === currentDeviceId) || null,
     [currentDeviceId, currentUser]
   );
-
   const getDeviceStorageDir = (device) => {
     if (!currentUser?.id || !device?.id) return '';
+    if (Platform.OS === 'web') return `/users/${currentUser.id}/devices/${device.id}/`;
     return `${FileSystem.documentDirectory}users/${currentUser.id}/devices/${device.id}/`;
   };
 
   const ensureDeviceFolders = async (device) => {
     const deviceRoot = getDeviceStorageDir(device);
     if (!deviceRoot) return '';
+
+    if (Platform.OS === 'web') return deviceRoot; // Skip real FS creation on web
 
     const requiredSubfolders = ['Camera/', 'Downloads/'];
     const rootInfo = await FileSystem.getInfoAsync(deviceRoot);
@@ -109,5 +109,4 @@ export const OSProvider = ({ children }) => {
     </OSContext.Provider>
   );
 };
-
 export const useOS = () => useContext(OSContext);

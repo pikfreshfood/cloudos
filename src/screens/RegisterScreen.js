@@ -1,15 +1,38 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet,  KeyboardAvoidingView, Platform, ActivityIndicator, ScrollView } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator, ScrollView, Image, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../context/AuthContext';
 
+const cloudOsLogo = require('../../assets/cloud-os-logo.png');
+const TERMS_SECTIONS = [
+  {
+    title: 'Platform use',
+    body: 'Use Cloud OS only for lawful, respectful, and authorized activity. You are responsible for protecting your account, device number, private files, and any activity linked to your account.',
+  },
+  {
+    title: 'Developer submissions',
+    body: 'Developers are responsible for the apps they submit, including permissions, content, external links, icons, screenshots, updates, data handling, and compliance with applicable laws and platform requirements.',
+  },
+  {
+    title: 'Service changes',
+    body: 'Cloud OS may update features, review flows, storage behavior, access rules, security checks, and availability as the platform grows. Continued use of the service means you accept the revised platform experience.',
+  },
+  {
+    title: 'Account and file responsibility',
+    body: 'Keep backups of important files and do not upload content you do not have the right to store or share. Cloud OS may restrict activity that harms users, devices, infrastructure, or platform integrity.',
+  },
+];
+
 export default function RegisterScreen({ navigation }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
+  const [termsVisible, setTermsVisible] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const { isAuthenticated, isHydrated, register } = useAuth();
 
@@ -20,13 +43,23 @@ export default function RegisterScreen({ navigation }) {
   }, [isAuthenticated, isHydrated, navigation]);
 
   const handleRegister = async () => {
-    if (password !== confirmPassword) {
+    if (password.trim() !== confirmPassword.trim()) {
       alert("Passwords don't match");
+      return;
+    }
+
+    if (!/^\d{3,20}$/.test(phoneNumber)) {
+      alert('Enter a valid phone number with 3 to 20 digits.');
+      return;
+    }
+
+    if (!acceptedTerms) {
+      alert('Please accept the Terms and Conditions before signing up.');
       return;
     }
     
     setIsLoading(true);
-    const result = await register({ name, email, password });
+    const result = await register({ name, email, phoneNumber, password });
     setIsLoading(false);
 
     if (result.ok) {
@@ -55,11 +88,9 @@ export default function RegisterScreen({ navigation }) {
             </View>
 
             <View style={styles.logoContainer}>
-              <View style={styles.logoCircle}>
-                <Ionicons name="person-add" size={48} color="#38bdf8" />
-              </View>
+              <Image source={cloudOsLogo} style={styles.logoImage} resizeMode="contain" />
               <Text style={styles.appName}>Create Account</Text>
-              <Text style={styles.subtitle}>Join Cloud Mobile today</Text>
+              <Text style={styles.subtitle}>Use your real phone number for contacts and account recovery</Text>
             </View>
 
             <View style={styles.formContainer}>
@@ -80,10 +111,25 @@ export default function RegisterScreen({ navigation }) {
                   style={styles.input}
                   placeholder="Email Address"
                   placeholderTextColor="#64748b"
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  value={email}
-                  onChangeText={setEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoComplete="email"
+                textContentType="emailAddress"
+                value={email}
+                onChangeText={setEmail}
+              />
+              </View>
+
+              <View style={styles.inputGroup}>
+                <Ionicons name="phone-portrait-outline" size={20} color="#94a3b8" style={styles.inputIcon} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Phone Number"
+                  placeholderTextColor="#64748b"
+                  keyboardType="phone-pad"
+                  value={phoneNumber}
+                  onChangeText={(value) => setPhoneNumber(value.replace(/\D+/g, '').slice(0, 15))}
                 />
               </View>
 
@@ -92,11 +138,15 @@ export default function RegisterScreen({ navigation }) {
                 <TextInput
                   style={styles.input}
                   placeholder="Password"
-                  placeholderTextColor="#64748b"
-                  secureTextEntry
-                  value={password}
-                  onChangeText={setPassword}
-                />
+                placeholderTextColor="#64748b"
+                secureTextEntry
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoComplete="new-password"
+                textContentType="newPassword"
+                value={password}
+                onChangeText={setPassword}
+              />
               </View>
 
               <View style={styles.inputGroup}>
@@ -104,17 +154,36 @@ export default function RegisterScreen({ navigation }) {
                 <TextInput
                   style={styles.input}
                   placeholder="Confirm Password"
-                  placeholderTextColor="#64748b"
-                  secureTextEntry
-                  value={confirmPassword}
-                  onChangeText={setConfirmPassword}
-                />
+                placeholderTextColor="#64748b"
+                secureTextEntry
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoComplete="new-password"
+                textContentType="newPassword"
+                value={confirmPassword}
+                onChangeText={setConfirmPassword}
+              />
               </View>
+
+              <TouchableOpacity style={styles.termsRow} onPress={() => setAcceptedTerms((value) => !value)}>
+                <Ionicons
+                  name={acceptedTerms ? 'checkbox' : 'square-outline'}
+                  size={22}
+                  color={acceptedTerms ? '#38bdf8' : '#94a3b8'}
+                  style={styles.termsIcon}
+                />
+                <Text style={styles.termsText}>
+                  I accept the{' '}
+                  <Text style={styles.termsLink} onPress={() => setTermsVisible(true)}>
+                    Terms and Conditions
+                  </Text>
+                </Text>
+              </TouchableOpacity>
 
               <TouchableOpacity 
                 style={styles.registerBtn}
                 onPress={handleRegister}
-                disabled={isLoading || !name || !email || !password || !confirmPassword}
+                disabled={isLoading || !name.trim() || !email.trim() || !phoneNumber || !password.trim() || !confirmPassword.trim() || !acceptedTerms}
               >
                 <LinearGradient
                   colors={['#3b82f6', '#2563eb']}
@@ -135,9 +204,40 @@ export default function RegisterScreen({ navigation }) {
                 </TouchableOpacity>
               </View>
             </View>
+
           </ScrollView>
+
         </KeyboardAvoidingView>
       </LinearGradient>
+      <Modal visible={termsVisible} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.termsModal}>
+            <Text style={styles.termsModalTitle}>Terms and Conditions</Text>
+            <ScrollView style={styles.termsModalBody}>
+              {TERMS_SECTIONS.map((section) => (
+                <View key={section.title} style={styles.termSection}>
+                  <Text style={styles.termSectionTitle}>{section.title}</Text>
+                  <Text style={styles.termSectionBody}>{section.body}</Text>
+                </View>
+              ))}
+            </ScrollView>
+            <View style={styles.termsModalActions}>
+              <TouchableOpacity style={styles.termsCloseBtn} onPress={() => setTermsVisible(false)}>
+                <Text style={styles.termsCloseText}>Close</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.termsAcceptBtn}
+                onPress={() => {
+                  setAcceptedTerms(true);
+                  setTermsVisible(false);
+                }}
+              >
+                <Text style={styles.termsAcceptText}>Accept</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -173,16 +273,10 @@ const styles = StyleSheet.create({
     marginBottom: 40,
     marginTop: 40,
   },
-  logoCircle: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    backgroundColor: 'rgba(56, 189, 248, 0.1)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(56, 189, 248, 0.2)',
+  logoImage: {
+    width: 190,
+    height: 118,
+    marginBottom: 10,
   },
   appName: {
     fontSize: 28,
@@ -205,12 +299,12 @@ const styles = StyleSheet.create({
   inputGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(15, 23, 42, 0.6)',
+    backgroundColor: '#ffffff',
     borderRadius: 16,
     marginBottom: 16,
     paddingHorizontal: 16,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: '#e2e8f0',
   },
   inputIcon: {
     marginRight: 12,
@@ -218,7 +312,7 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     height: 56,
-    color: '#ffffff',
+    color: '#0f172a',
     fontSize: 16,
   },
   registerBtn: {
@@ -226,7 +320,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     overflow: 'hidden',
     marginBottom: 24,
-    marginTop: 8,
+    marginTop: 12,
   },
   registerBtnGradient: {
     flex: 1,
@@ -252,5 +346,88 @@ const styles = StyleSheet.create({
     color: '#38bdf8',
     fontSize: 14,
     fontWeight: 'bold',
+  },
+  termsRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginTop: 2,
+    marginBottom: 8,
+  },
+  termsIcon: {
+    marginRight: 10,
+    marginTop: 1,
+  },
+  termsText: {
+    flex: 1,
+    color: '#94a3b8',
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  termsLink: {
+    color: '#38bdf8',
+    fontWeight: '800',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(2,7,19,0.76)',
+    justifyContent: 'center',
+    padding: 22,
+  },
+  termsModal: {
+    maxHeight: '82%',
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    padding: 20,
+  },
+  termsModalTitle: {
+    color: '#0f172a',
+    fontSize: 20,
+    fontWeight: '900',
+    marginBottom: 14,
+  },
+  termsModalBody: {
+    maxHeight: 420,
+  },
+  termSection: {
+    marginBottom: 16,
+  },
+  termSectionTitle: {
+    color: '#0f172a',
+    fontSize: 15,
+    fontWeight: '900',
+    marginBottom: 6,
+  },
+  termSectionBody: {
+    color: '#475569',
+    fontSize: 14,
+    lineHeight: 21,
+  },
+  termsModalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+    marginTop: 18,
+  },
+  termsCloseBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#f1f5f9',
+  },
+  termsCloseText: {
+    color: '#475569',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  termsAcceptBtn: {
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#2563eb',
+  },
+  termsAcceptText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '900',
   },
 });

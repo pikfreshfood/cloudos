@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Dimensions, ScrollView, Modal, FlatList, ActivityIndicator, Animated, PanResponder, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useOS } from '../context/OSContext';
@@ -60,6 +61,12 @@ export default function MusicScreenDevice({ navigation }) {
   useEffect(() => {
     refreshTracks().catch(() => {});
   }, [refreshTracks]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      refreshTracks().catch(() => {});
+    }, [refreshTracks])
+  );
 
   useEffect(() => {
     if (!showPlaylist) return;
@@ -175,7 +182,8 @@ export default function MusicScreenDevice({ navigation }) {
         </View>
         <View style={styles.playlistItemInfo}>
           <Text style={styles.playlistItemTitle} numberOfLines={1}>{item.title}</Text>
-          <Text style={styles.playlistItemArtist}>{item.artist} | {item.size}</Text>
+          <Text style={styles.playlistItemArtist} numberOfLines={1}>{item.artist}</Text>
+          <Text style={styles.playlistItemMeta} numberOfLines={1}>{item.size}</Text>
         </View>
         {isActive && isPlaying && (
           <Ionicons name="stats-chart" size={16} color="#10b981" />
@@ -612,8 +620,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     borderTopLeftRadius: 30,
     borderTopRightRadius: 30,
-    minHeight: '60%',
-    padding: 24,
+    minHeight: Platform.OS === 'android' ? '74%' : '60%',
+    maxHeight: Platform.OS === 'android' ? '88%' : '80%',
+    paddingHorizontal: 24,
+    paddingTop: 24,
+    paddingBottom: Platform.OS === 'android' ? 16 : 24,
   },
   playlistKeyboardWrap: {
     width: '100%',
@@ -702,7 +713,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   playlistList: {
-    paddingBottom: 40,
+    paddingBottom: Platform.OS === 'android' ? 20 : 40,
   },
   emptySearchText: {
     textAlign: 'center',
@@ -714,7 +725,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#f8fafc',
-    padding: 12,
+    paddingVertical: Platform.OS === 'android' ? 14 : 12,
+    paddingHorizontal: 12,
     borderRadius: 20,
     marginBottom: 12,
     borderWidth: 1,
@@ -730,13 +742,13 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   playlistItemIcon: {
-    width: 48,
-    height: 48,
+    width: Platform.OS === 'android' ? 44 : 48,
+    height: Platform.OS === 'android' ? 44 : 48,
     backgroundColor: '#ecfdf5',
     borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 16,
+    marginRight: 12,
   },
   playlistItemInfo: {
     flex: 1,
@@ -750,6 +762,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#64748b',
     marginTop: 4,
+  },
+  playlistItemMeta: {
+    fontSize: 11,
+    color: '#0f766e',
+    marginTop: 4,
+    fontWeight: '700',
   },
   bottomNav: {
     height: 48,

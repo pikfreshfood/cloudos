@@ -22,14 +22,16 @@ export default function VideoPlayerScreen({ navigation }) {
   const [playerError, setPlayerError] = useState('');
   const hasApiContext = !!currentUser?.id && !!currentDevice?.id;
   const player = useMemo(() => createVideoPlayer(null), []);
+  const fullscreenPlayer = useMemo(() => createVideoPlayer(null), []);
   const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
 
   useEffect(() => () => {
     player.release();
-  }, [player]);
+    fullscreenPlayer.release();
+  }, [player, fullscreenPlayer]);
 
   useEffect(() => {
-    const subscription = player.addListener('statusChange', ({ error }) => {
+    const handleStatusChange = ({ error }) => {
       if (!error) {
         setPlayerError('');
         return;
@@ -37,12 +39,16 @@ export default function VideoPlayerScreen({ navigation }) {
 
       console.error('Video playback error:', error);
       setPlayerError('This video could not be played.');
-    });
+    };
+
+    const subscription = player.addListener('statusChange', handleStatusChange);
+    const fullscreenSubscription = fullscreenPlayer.addListener('statusChange', handleStatusChange);
 
     return () => {
       subscription.remove();
+      fullscreenSubscription.remove();
     };
-  }, [player]);
+  }, [player, fullscreenPlayer]);
 
   useFocusEffect(
     useCallback(() => {
@@ -139,6 +145,8 @@ export default function VideoPlayerScreen({ navigation }) {
     try {
       setPlayerError('');
       setSelectedVideo(video);
+      setIsFullscreen(false);
+      fullscreenPlayer.pause();
       player.loop = true;
       player.replace(video.uri);
       player.play();
@@ -150,9 +158,56 @@ export default function VideoPlayerScreen({ navigation }) {
 
   const closeVideo = () => {
     player.pause();
+    fullscreenPlayer.pause();
     setSelectedVideo(null);
     setIsFullscreen(false);
     setPlayerError('');
+  };
+
+  const getCurrentTime = (activePlayer) => (
+    Number.isFinite(activePlayer.currentTime) ? activePlayer.currentTime : 0
+  );
+
+  const openFullscreen = () => {
+    if (!selectedVideo) {
+      return;
+    }
+
+    try {
+      const playbackTime = getCurrentTime(player);
+      const shouldContinuePlaying = player.playing;
+
+      fullscreenPlayer.loop = true;
+      fullscreenPlayer.replace(selectedVideo.uri);
+      fullscreenPlayer.currentTime = playbackTime;
+
+      player.pause();
+      if (shouldContinuePlaying) {
+        fullscreenPlayer.play();
+      }
+
+      setIsFullscreen(true);
+    } catch (error) {
+      console.error('Failed to open fullscreen video:', error);
+      Alert.alert('Playback error', 'The video could not open in fullscreen.');
+    }
+  };
+
+  const closeFullscreen = () => {
+    try {
+      const playbackTime = getCurrentTime(fullscreenPlayer);
+      const shouldContinuePlaying = fullscreenPlayer.playing;
+
+      fullscreenPlayer.pause();
+      player.currentTime = playbackTime;
+      if (shouldContinuePlaying) {
+        player.play();
+      }
+    } catch (error) {
+      console.error('Failed to return from fullscreen video:', error);
+    } finally {
+      setIsFullscreen(false);
+    }
   };
 
   const renderVideoItem = ({ item }) => (
@@ -196,7 +251,7 @@ export default function VideoPlayerScreen({ navigation }) {
                   contentFit="contain"
                   nativeControls
                 />
-                <TouchableOpacity style={styles.fullscreenBtn} onPress={() => setIsFullscreen(true)}>
+                <TouchableOpacity style={styles.fullscreenBtn} onPress={openFullscreen}>
                   <Ionicons name="expand" size={22} color="#ffffff" />
                 </TouchableOpacity>
               </View>
@@ -259,17 +314,17 @@ export default function VideoPlayerScreen({ navigation }) {
         visible={isFullscreen}
         animationType="fade"
         transparent={false}
-        onRequestClose={() => setIsFullscreen(false)}
+        onRequestClose={closeFullscreen}
       >
         <View style={styles.fullscreenContainer}>
           <VideoView
             style={styles.fullscreenVideo}
-            player={player}
+            player={fullscreenPlayer}
             allowsFullscreen={false}
             contentFit="contain"
             nativeControls
           />
-          <TouchableOpacity style={styles.fullscreenExitBtn} onPress={() => setIsFullscreen(false)}>
+          <TouchableOpacity style={styles.fullscreenExitBtn} onPress={closeFullscreen}>
             <Ionicons name="close" size={28} color="#ffffff" />
           </TouchableOpacity>
         </View>

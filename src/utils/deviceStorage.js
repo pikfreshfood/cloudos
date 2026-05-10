@@ -1,7 +1,7 @@
 import * as FileSystem from 'expo-file-system/legacy';
 
 export const getDeviceStorageLimitBytes = (device) => {
-  const storageMb = Number(device?.storage || 200);
+  const storageMb = Number(device?.storage || 500);
   return storageMb * 1024 * 1024;
 };
 

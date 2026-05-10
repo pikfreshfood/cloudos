@@ -166,13 +166,23 @@ export default function CameraScreen({ navigation }) {
       });
 
       await assertCanPersistMedia(destination);
-      await uploadCapturedMedia({
-        uri: photo.uri,
-        fileName,
-        mimeType: 'image/jpeg',
-      });
-
-      Alert.alert('Saved', `Photo saved to Camera/${fileName}`);
+      
+      try {
+        await uploadCapturedMedia({
+          uri: destination,
+          fileName,
+          mimeType: 'image/jpeg',
+        });
+        Alert.alert('Saved', `Photo saved to Cloud (Camera/${fileName})`);
+      } catch (uploadError) {
+        console.error('Failed to upload photo:', {
+          message: uploadError?.message,
+          status: uploadError?.response?.status,
+          data: uploadError?.response?.data,
+        });
+        const reason = uploadError?.response?.data?.message || uploadError?.message || 'Upload failed';
+        Alert.alert('Saved locally', `Photo saved to local Camera/${fileName}, but failed to upload to cloud. ${reason}`);
+      }
     } catch (error) {
       console.error('Failed to capture photo:', error);
       if (`${error?.message || ''}`.toLowerCase().includes('storage')) {
@@ -219,13 +229,23 @@ export default function CameraScreen({ navigation }) {
       });
 
       await assertCanPersistMedia(destination);
-      await uploadCapturedMedia({
-        uri: video.uri,
-        fileName,
-        mimeType: 'video/mp4',
-      });
 
-      Alert.alert('Saved', `Video saved to Camera/${fileName}`);
+      try {
+        await uploadCapturedMedia({
+          uri: destination,
+          fileName,
+          mimeType: 'video/mp4',
+        });
+        Alert.alert('Saved', `Video saved to Cloud (Camera/${fileName})`);
+      } catch (uploadError) {
+        console.error('Failed to upload video:', {
+          message: uploadError?.message,
+          status: uploadError?.response?.status,
+          data: uploadError?.response?.data,
+        });
+        const reason = uploadError?.response?.data?.message || uploadError?.message || 'Upload failed';
+        Alert.alert('Saved locally', `Video saved to local Camera/${fileName}, but failed to upload to cloud. ${reason}`);
+      }
     } catch (error) {
       console.error('Failed to record video:', error);
       if (`${error?.message || ''}`.toLowerCase().includes('permission')) {

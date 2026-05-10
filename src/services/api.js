@@ -1,18 +1,31 @@
 import axios from 'axios';
-import { Platform } from 'react-native';
+import Constants from 'expo-constants';
+import * as FileSystem from 'expo-file-system/legacy';
 
-// Physical devices must use the PC's LAN IP, not localhost.
-// Ensure Laravel is running with: php artisan serve --host 0.0.0.0 --port 8000
-export const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.18.2:8000/api';
-export const WEB_BASE_URL = API_URL.replace(/\/api$/, '');
+const API_SUFFIX = '/api';
+const LIVE_HOST = 'https://cloudos.ng/';
 
-const LOCAL_API_URL = 'http://127.0.0.1:8000/api';
-const API_BASE_URLS = Array.from(
-  new Set([
-    API_URL,
-    ...(Platform.OS === 'web' ? [LOCAL_API_URL] : []),
-  ])
-);
+const normalizeApiUrl = (value) => {
+  if (!value || typeof value !== 'string') return '';
+  const raw = value.trim();
+  if (!raw) return '';
+  const withProtocol = /^https?:\/\//i.test(raw)
+    ? raw
+    : `http://${raw}`;
+  const trimmed = withProtocol.replace(/\/+$/, '');
+  const base = trimmed.endsWith(API_SUFFIX) ? trimmed : `${trimmed}${API_SUFFIX}`;
+  return `${base}/`;
+};
+
+const CONFIG_API_URL = Constants.expoConfig?.extra?.apiUrl || Constants.manifest?.extra?.apiUrl;
+
+const getConfiguredApiUrl = () => {
+  const envApiUrl = process.env.EXPO_PUBLIC_API_URL;
+  return envApiUrl || CONFIG_API_URL || LIVE_HOST;
+};
+
+export let API_URL = normalizeApiUrl(getConfiguredApiUrl());
+export let WEB_BASE_URL = API_URL.replace(/\/api\/$/, '');
 
 const createClient = (baseURL) => axios.create({
   baseURL,
@@ -23,295 +36,335 @@ const createClient = (baseURL) => axios.create({
   timeout: 10000,
 });
 
-const apiClients = API_BASE_URLS.map(createClient);
-
-const shouldTryNextBaseUrl = (error) => (
-  !error?.response && ['ECONNABORTED', 'ERR_NETWORK'].includes(error?.code)
-);
+let apiClient = createClient(API_URL);
 
 const request = async (config) => {
-  let lastError;
+  return apiClient.request(config);
+};
 
-  for (const client of apiClients) {
-    try {
-      return await client.request(config);
-    } catch (error) {
-      lastError = error;
-
-      if (!shouldTryNextBaseUrl(error)) {
-        throw error;
-      }
-    }
+export const setApiBaseUrl = (value) => {
+  const normalized = normalizeApiUrl(value);
+  if (normalized) {
+    API_URL = normalized;
+    WEB_BASE_URL = normalized.replace(/\/api\/$/, '');
+    apiClient = createClient(API_URL);
   }
-
-  throw lastError;
 };
 
 const api = {
   get: (url, config) => request({ ...config, method: 'get', url }),
   post: (url, data, config) => request({ ...config, method: 'post', url, data }),
+  patch: (url, data, config) => request({ ...config, method: 'patch', url, data }),
   delete: (url, config) => request({ ...config, method: 'delete', url }),
 };
 
-// Example API calls
 export const phoneService = {
-  // Fetch basic phone settings/apps
-  getSettings: () => api.get('/phone/settings'),
-  
-  // Fetch music tracks
-  getTracks: () => api.get('/music/tracks'),
+  getSettings: () => api.get('phone/settings'),
+  getTracks: () => api.get('music/tracks'),
 };
 
 export const authService = {
-  register: async ({ name, email, password }) => {
-    const response = await api.post('/auth/register', {
-      name,
-      email,
-      password,
-    });
-
+  register: async ({ name, email, phoneNumber, password }) => {
+    const response = await api.post('auth/register', { name, email, phone_number: phoneNumber, password });
     return response.data;
   },
   login: async ({ email, password }) => {
-    const response = await api.post('/auth/login', {
-      email,
-      password,
+    const response = await api.post('auth/login', { email, password });
+    return response.data;
+  },
+  forgotPassword: async ({ email }) => {
+    const response = await api.post('auth/forgot-password', { email });
+    return response.data;
+  },
+  updateProfile: async ({ userId, name, password }) => {
+    const response = await api.patch('auth/profile', {
+      user_id: userId,
+      name,
+      ...(password ? { password } : {}),
     });
+    return response.data;
+  },
+};
 
+export const deviceService = {
+  sync: async ({ userId, devices }) => {
+    const response = await api.post('devices/sync', {
+      user_id: userId,
+      devices: (devices || []).map((device) => ({
+        device_id: device.id || device.deviceId,
+        name: device.name,
+        os: device.os,
+        phone_number: device.phoneNumber || device.phone_number,
+        storage: device.storage,
+      })),
+    });
+    return response.data;
+  },
+  installedApps: async ({ userId, deviceId }) => {
+    const response = await api.get('devices/installed-apps', {
+      params: { user_id: userId, device_id: deviceId },
+    });
+    return response.data;
+  },
+  syncInstalledApps: async ({ userId, deviceId, apps }) => {
+    const response = await api.post('devices/installed-apps/sync', {
+      user_id: userId,
+      device_id: deviceId,
+      apps,
+    });
+    return response.data;
+  },
+  shareInstalledApps: async ({ senderUserId, senderDeviceId, recipientPhoneNumber, apps }) => {
+    const response = await api.post('devices/installed-apps/share', {
+      sender_user_id: senderUserId,
+      sender_device_id: senderDeviceId,
+      recipient_phone_number: recipientPhoneNumber,
+      apps,
+    });
+    return response.data;
+  },
+  syncPushToken: async ({ userId, deviceId, phoneNumber, pushToken, platform }) => {
+    const response = await api.post('devices/push-token', {
+      user_id: userId,
+      device_id: deviceId,
+      phone_number: phoneNumber,
+      push_token: pushToken,
+      platform,
+    });
     return response.data;
   },
 };
 
 export const contactService = {
   list: async ({ userId }) => {
-    const response = await api.get('/contacts', {
-      params: {
-        user_id: userId,
-      },
-    });
-
+    const response = await api.get('contacts', { params: { user_id: userId } });
     return response.data;
   },
   save: async ({ userId, name, phoneNumber }) => {
-    const response = await api.post('/contacts', {
-      user_id: userId,
-      name,
-      phone_number: phoneNumber,
-    });
-
+    const response = await api.post('contacts', { user_id: userId, name, phone_number: phoneNumber });
     return response.data;
   },
   remove: async ({ userId, contactId }) => {
-    const response = await api.delete('/contacts', {
-      data: {
-        user_id: userId,
-        contact_id: contactId,
-      },
-    });
-
+    const response = await api.delete('contacts', { data: { user_id: userId, contact_id: contactId } });
     return response.data;
   },
   lookup: async ({ phoneNumber }) => {
-    const response = await api.get('/contacts/lookup', {
-      params: {
-        phone_number: phoneNumber,
-      },
-    });
-
+    const response = await api.get('contacts/lookup', { params: { phone_number: phoneNumber } });
     return response.data;
   },
 };
 
-export const callService = {
-  current: async ({ userId }) => {
-    const response = await api.get('/calls/current', {
-      params: {
-        user_id: userId,
-      },
+export const messageService = {
+  conversations: async ({ userId, ownerPhoneNumber }) => {
+    const response = await api.get('messages', {
+      params: { user_id: userId, owner_phone_number: ownerPhoneNumber },
     });
-
     return response.data;
   },
-  start: async ({ callerUserId, phoneNumber }) => {
-    const response = await api.post('/calls/start', {
-      caller_user_id: callerUserId,
-      phone_number: phoneNumber,
+  unreadCount: async ({ userId, phoneNumber }) => {
+    const response = await api.get('messages/unread-count', {
+      params: { user_id: userId, phone_number: phoneNumber },
     });
-
     return response.data;
   },
-  accept: async ({ userId, sessionId }) => {
-    const response = await api.post('/calls/accept', {
-      user_id: userId,
-      session_id: sessionId,
+  thread: async ({ userId, ownerPhoneNumber, peerPhoneNumber }) => {
+    const response = await api.get('messages/thread', {
+      params: { user_id: userId, owner_phone_number: ownerPhoneNumber, peer_phone_number: peerPhoneNumber },
     });
-
     return response.data;
   },
-  signal: async ({ userId, sessionId, offerSdp, answerSdp, iceCandidate }) => {
-    const response = await api.post('/calls/signal', {
-      user_id: userId,
-      session_id: sessionId,
-      ...(offerSdp ? { offer_sdp: offerSdp } : {}),
-      ...(answerSdp ? { answer_sdp: answerSdp } : {}),
-      ...(iceCandidate ? { ice_candidate: iceCandidate } : {}),
-    });
-
+  send: async ({ userId, senderPhoneNumber, recipientPhoneNumber, body }) => {
+    const response = await api.post('messages', { user_id: userId, sender_phone_number: senderPhoneNumber, recipient_phone_number: recipientPhoneNumber, body });
     return response.data;
   },
-  end: async ({ userId, sessionId, status }) => {
-    const response = await api.post('/calls/end', {
-      user_id: userId,
-      session_id: sessionId,
-      status,
+  deleteThread: async ({ userId, ownerPhoneNumber, peerPhoneNumber }) => {
+    const response = await api.delete('messages', {
+      data: { user_id: userId, owner_phone_number: ownerPhoneNumber, peer_phone_number: peerPhoneNumber },
     });
-
     return response.data;
+  },
+  checkNumber: async ({ phoneNumber }) => {
+    const response = await api.get('contacts/lookup', { params: { phone_number: phoneNumber } });
+    return {
+      exists: !!(response.data?.user || response.data?.device),
+      id: response.data?.device?.user_id || response.data?.user?.id || null,
+      name: response.data?.device?.name || response.data?.user?.name || null,
+      phone_number: response.data?.device?.phone_number || response.data?.user?.phone_number || phoneNumber,
+      device: response.data?.device || null,
+      user: response.data?.user || null,
+    };
   },
 };
 
 export const fileService = {
   list: async ({ userId, deviceId, folderPath = '' }) => {
-    const response = await api.get('/files', {
-      params: {
-        user_id: userId,
-        device_id: deviceId,
-        folder_path: folderPath,
-      },
+    const response = await api.get('files', { params: { user_id: userId, device_id: deviceId, folder_path: folderPath } });
+    return response.data;
+  },
+  uploadBase64: async ({ uri, name, mimeType, userId, deviceId, folderPath = '', onUploadProgress }) => {
+    onUploadProgress?.({ loaded: 1, total: 3 });
+    const fileData = await FileSystem.readAsStringAsync(uri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    onUploadProgress?.({ loaded: 2, total: 3 });
+
+    const response = await api.post('files/upload-base64', {
+      file_name: name,
+      file_data: fileData,
+      mime_type: mimeType || 'application/octet-stream',
+      user_id: userId,
+      device_id: deviceId,
+      folder_path: folderPath,
     });
 
+    onUploadProgress?.({ loaded: 3, total: 3 });
     return response.data;
   },
   upload: async ({ uri, name, mimeType, userId, deviceId, folderPath = '', onUploadProgress }) => {
     const formData = new FormData();
-    formData.append('file', {
-      uri,
-      name,
-      type: mimeType || 'application/octet-stream',
-    });
+    formData.append('file', { uri, name, type: mimeType || 'application/octet-stream' });
     formData.append('user_id', userId);
     formData.append('device_id', deviceId);
     formData.append('folder_path', folderPath);
+    onUploadProgress?.({ loaded: 1, total: 2 });
 
-    const response = await api.post('/files/upload', formData, {
+    const response = await fetch(`${API_URL}files/upload`, {
+      method: 'POST',
       headers: {
-        'Content-Type': 'multipart/form-data',
+        Accept: 'application/json',
       },
-      onUploadProgress,
+      body: formData,
     });
 
-    return response.data;
+    const responseText = await response.text();
+    let data = null;
+    try {
+      data = responseText ? JSON.parse(responseText) : null;
+    } catch {
+      data = { message: responseText || 'Upload failed.' };
+    }
+
+    if (!response.ok) {
+      const blockedByHost = response.status === 403 && /<!doctype html|<html/i.test(responseText || '');
+      if (blockedByHost) {
+        return fileService.uploadBase64({
+          uri,
+          name,
+          mimeType,
+          userId,
+          deviceId,
+          folderPath,
+          onUploadProgress,
+        });
+      }
+
+      const message = /<!doctype html|<html/i.test(data?.message || '')
+        ? `Upload failed with status ${response.status}`
+        : data?.message || `Upload failed with status ${response.status}`;
+      const error = new Error(message);
+      error.response = { status: response.status, data };
+      throw error;
+    }
+
+    onUploadProgress?.({ loaded: 2, total: 2 });
+    return data;
   },
   createFolder: async ({ userId, deviceId, folderPath = '', name }) => {
-    const response = await api.post('/files/folders', {
-      user_id: userId,
-      device_id: deviceId,
-      folder_path: folderPath,
-      name,
-    });
-
+    const response = await api.post('files/folders', { user_id: userId, device_id: deviceId, folder_path: folderPath, name });
     return response.data;
   },
   saveHtmlCompanion: async ({ userId, deviceId, path, html }) => {
-    const response = await api.post('/files/html-companion', {
-      user_id: userId,
-      device_id: deviceId,
-      path,
-      html,
-    });
-
+    const response = await api.post('files/html-companion', { user_id: userId, device_id: deviceId, path, html });
     return response.data;
   },
   rename: async ({ userId, deviceId, path, name, type }) => {
-    const response = await api.post('/files/rename', {
-      user_id: userId,
-      device_id: deviceId,
-      path,
-      name,
-      type,
-    });
-
+    const response = await api.post('files/rename', { user_id: userId, device_id: deviceId, path, name, type });
     return response.data;
   },
   move: async ({ userId, deviceId, path, type, destinationFolderPath = '' }) => {
-    const response = await api.post('/files/move', {
-      user_id: userId,
-      device_id: deviceId,
-      path,
-      type,
-      destination_folder_path: destinationFolderPath,
-    });
-
+    const response = await api.post('files/move', { user_id: userId, device_id: deviceId, path, type, destination_folder_path: destinationFolderPath });
     return response.data;
   },
   copy: async ({ userId, deviceId, path, type, destinationFolderPath = '' }) => {
-    const response = await api.post('/files/copy', {
+    const response = await api.post('files/copy', { user_id: userId, device_id: deviceId, path, type, destination_folder_path: destinationFolderPath });
+    return response.data;
+  },
+  share: async ({ userId, deviceId, recipientPhoneNumber, recipientUserId = null, recipientDeviceId = null, recipientDeviceStorage = null, items }) => {
+    const response = await api.post('files/share', {
       user_id: userId,
       device_id: deviceId,
-      path,
-      type,
-      destination_folder_path: destinationFolderPath,
+      recipient_phone_number: recipientPhoneNumber,
+      ...(recipientUserId ? { recipient_user_id: recipientUserId } : {}),
+      ...(recipientDeviceId ? { recipient_device_id: recipientDeviceId } : {}),
+      ...(recipientDeviceStorage ? { recipient_device_storage: recipientDeviceStorage } : {}),
+      items,
     });
-
     return response.data;
   },
   delete: async ({ userId, deviceId, path, type }) => {
-    const response = await api.delete('/files', {
-      data: {
-        user_id: userId,
-        device_id: deviceId,
-        path,
-        type,
-      },
-    });
-
+    const response = await api.delete('files', { data: { user_id: userId, device_id: deviceId, path, type } });
     return response.data;
   },
-  getDownloadUrl: ({ userId, deviceId, path }) => (
-    `${API_URL}/files/download?user_id=${encodeURIComponent(userId)}&device_id=${encodeURIComponent(deviceId)}&path=${encodeURIComponent(path)}`
-  ),
+  getDownloadUrl: ({ userId, deviceId, path }) => (`${API_URL}files/download?user_id=${encodeURIComponent(userId)}&device_id=${encodeURIComponent(deviceId)}&path=${encodeURIComponent(path)}`),
+};
+
+export const appStoreService = {
+  list: async ({ search = '' } = {}) => {
+    const response = await api.get('app-store/apps', { params: search ? { search } : {} });
+    return response.data;
+  },
+  reviews: async ({ appId }) => {
+    const response = await api.get(`app-store/apps/${appId}/reviews`);
+    return response.data;
+  },
+  submitReview: async ({ appId, userId, deviceId, rating, comment }) => {
+    const response = await api.post(`app-store/apps/${appId}/reviews`, {
+      user_id: userId,
+      device_id: deviceId,
+      rating,
+      comment,
+    });
+    return response.data;
+  },
 };
 
 export const mediaService = {
   listMusic: async ({ userId, deviceId }) => {
-    const response = await api.get('/media/music', {
-      params: {
-        user_id: userId,
-        device_id: deviceId,
-      },
-    });
-
+    const response = await api.get('media/music', { params: { user_id: userId, device_id: deviceId } });
     return response.data;
   },
   listImages: async ({ userId, deviceId }) => {
-    const response = await api.get('/media/images', {
-      params: {
-        user_id: userId,
-        device_id: deviceId,
-      },
-    });
-
+    const response = await api.get('media/images', { params: { user_id: userId, device_id: deviceId } });
     return response.data;
   },
   deleteMedia: async ({ path }) => {
-    const response = await api.delete('/media', {
-      data: { path },
-    });
+    const response = await api.delete('media', { data: { path } });
+    return response.data;
+  },
+};
 
+export const signalService = {
+  send: async ({ senderPhoneNumber, receiverPhoneNumber, type, data }) => {
+    const response = await api.post('signals', { type: 'send', sender: senderPhoneNumber, receiver: receiverPhoneNumber, signalType: type, data: typeof data === 'string' ? data : JSON.stringify(data) });
+    return response.data;
+  },
+  receive: async ({ phoneNumber }) => {
+    const response = await api.post('signals', { type: 'receive', user: phoneNumber });
+    return response.data;
+  },
+  peek: async ({ phoneNumber }) => {
+    const response = await api.post('signals', { type: 'peek', user: phoneNumber });
     return response.data;
   },
 };
 
 export const paystackService = {
   initialize: async (payload) => {
-    const response = await api.post('/payments/paystack/initialize', {
-      ...payload,
-      mobile_callback_url: `${WEB_BASE_URL}/paystack/mobile/callback`,
-    });
+    const response = await api.post('payments/paystack/initialize', { ...payload, mobile_callback_url: `${WEB_BASE_URL}/paystack/mobile/callback` });
     return response.data;
   },
   verify: async (reference) => {
-    const response = await api.post('/payments/paystack/verify', { reference });
+    const response = await api.post('payments/paystack/verify', { reference });
     return response.data;
   },
 };

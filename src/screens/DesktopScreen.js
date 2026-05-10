@@ -6,52 +6,108 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useRecentApps } from '../context/RecentAppsContext';
 import { useWallpaper } from '../context/WallpaperContext';
 import { useOS } from '../context/OSContext';
+import { useAuth } from '../context/AuthContext';
+import { API_URL, messageService } from '../services/api';
+import { loadInstalledApps } from '../services/installedApps';
 
 const settingsIconAsset = require('../../assets/settings-removebg-preview.png');
 const appStoreIconAsset = require('../../assets/appsotr-removebg-preview.png');
 
 const DOCK_APPS_ANDROID = [
   { id: 'phone', name: 'Phone', icon: 'call', type: 'ionicon', screen: 'ContactsScreen', color: '#10b981' },
-  { id: 'messages', name: 'Messages', icon: 'chatbubble', type: 'ionicon', screen: 'ContactsScreen', color: '#3b82f6' },
+  { id: 'messages-dock', name: 'Messages', icon: 'chatbubble', type: 'ionicon', screen: 'MessagesScreen', color: '#3b82f6' },
   { id: 'browser', name: 'Browser', icon: 'google-chrome', type: 'material', screen: 'BrowserScreen', color: '#3b82f6' },
 ];
 
 const DOCK_APPS_IOS = [
   { id: 'phone', name: 'Phone', icon: 'call', type: 'ionicon', screen: 'ContactsScreen', color: '#25D366' },
   { id: 'safari', name: 'Safari', icon: 'compass-outline', type: 'custom-safari', screen: 'BrowserScreen', color: '#FFFFFF' },
-  { id: 'messages', name: 'Messages', icon: 'chatbubble', type: 'ionicon', screen: 'ContactsScreen', color: '#34C759' },
+  { id: 'messages-dock', name: 'Messages', icon: 'chatbubble', type: 'ionicon', screen: 'MessagesScreen', color: '#34C759' },
 ];
 
 const APPS_ANDROID = [
   { id: 'music', name: 'Music', icon: 'musical-notes', type: 'ionicon', screen: 'MusicScreen', color: '#10b981' },
   { id: 'camera', name: 'Camera', icon: 'camera', type: 'custom-camera', screen: 'CameraScreen', color: '#d7d9de' },
   { id: 'calculator', name: 'Calculator', icon: 'calculator', type: 'ionicon', screen: 'CalculatorScreen', color: '#f59e0b' },
+  {
+    id: 'facebook',
+    name: 'Facebook',
+    icon: 'facebook',
+    type: 'material',
+    screen: 'BrowserScreen',
+    color: '#1877f2',
+    params: {
+      initialUrl: 'https://m.facebook.com',
+      initialInputUrl: 'facebook.com',
+      minimalChrome: true,
+      showBottomMenu: true,
+      pageTitle: 'Facebook',
+    },
+  },
+  {
+    id: 'whatsapp',
+    name: 'WhatsApp',
+    icon: 'whatsapp',
+    type: 'material',
+    screen: 'BrowserScreen',
+    color: '#25D366',
+    params: {
+      initialUrl: 'https://web.whatsapp.com',
+      initialInputUrl: 'web.whatsapp.com',
+      browserMode: 'desktop',
+      minimalChrome: true,
+      showBottomMenu: true,
+      pageTitle: 'WhatsApp Web',
+    },
+  },
   { id: 'contacts', name: 'Contacts', icon: 'people', type: 'ionicon', screen: 'ContactsScreen', color: '#8b5cf6' },
   { id: 'gallery', name: 'Gallery', icon: 'images', type: 'ionicon', screen: 'GalleryScreen', color: '#ec4899' },
   { id: 'calendar', name: 'Calendar', icon: 'calendar', type: 'ionicon', screen: 'CalendarScreen', color: '#ef4444' },
   { id: 'files', name: 'Files', icon: 'folder', type: 'ionicon', screen: 'FilesScreen', color: '#0ea5e9' },
   { id: 'settings', name: 'Settings', icon: 'settings', type: 'ionicon', screen: 'SettingsScreen', color: '#64748b' },
   { id: 'appstore', name: 'App Store', icon: 'cart', type: 'ionicon', screen: 'AppStoreScreen', color: '#0ea5e9' },
+  { id: 'shareapp', name: 'Share App', icon: 'share-social', type: 'ionicon', screen: 'ShareAppScreen', color: '#6366f1' },
   { id: 'videoplayer', name: 'Video Player', icon: 'videocam', type: 'ionicon', screen: 'VideoPlayerScreen', color: '#f43f5e' },
-  { id: 'pdfreader', name: 'PDF Reader', icon: 'document-text', type: 'ionicon', screen: 'PdfReaderScreen', color: '#ef4444' },
-  { id: 'wordreader', name: 'Word Reader', icon: 'document', type: 'ionicon', screen: 'WordReaderScreen', color: '#2563eb' },
 ];
 
 const APPS_IOS = [
-  { id: 'weather', name: 'Weather', icon: 'partly-sunny', type: 'ionicon', screen: 'DesktopScreen', color: '#34C759' },
-  { id: 'stocks', name: 'Stocks', icon: 'trending-up', type: 'ionicon', screen: 'DesktopScreen', color: '#1C1C1E' },
-  { id: 'findmy', name: 'Find My', icon: 'location', type: 'ionicon', screen: 'DesktopScreen', color: '#34C759' },
   { id: 'camera-home-slot', name: 'Camera', icon: 'camera', type: 'custom-camera', screen: 'CameraScreen', color: '#d7d9de' },
   { id: 'calculator', name: 'Calculator', icon: 'calculator', type: 'ionicon', screen: 'CalculatorScreen', color: '#FF9F0A' },
-  { id: 'books', name: 'Books', icon: 'book', type: 'ionicon', screen: 'PdfReaderScreen', color: '#FF9500' },
-  { id: 'itunes', name: 'iTunes Store', icon: 'star', type: 'ionicon', screen: 'AppStoreScreen', color: '#AF52DE' },
-  { id: 'fitness', name: 'Fitness', icon: 'fitness', type: 'ionicon', screen: 'DesktopScreen', color: '#000000' },
-  { id: 'watch', name: 'Watch', icon: 'watch', type: 'ionicon', screen: 'DesktopScreen', color: '#1C1C1E' },
   { id: 'music', name: 'Music', icon: 'musical-notes', type: 'ionicon', screen: 'MusicScreen', color: '#FF2D55' },
+  {
+    id: 'facebook',
+    name: 'Facebook',
+    icon: 'facebook',
+    type: 'material',
+    screen: 'BrowserScreen',
+    color: '#1877f2',
+    params: {
+      initialUrl: 'https://m.facebook.com',
+      initialInputUrl: 'facebook.com',
+      minimalChrome: true,
+      showBottomMenu: true,
+      pageTitle: 'Facebook',
+    },
+  },
+  {
+    id: 'whatsapp',
+    name: 'WhatsApp',
+    icon: 'whatsapp',
+    type: 'material',
+    screen: 'BrowserScreen',
+    color: '#25D366',
+    params: {
+      initialUrl: 'https://web.whatsapp.com',
+      initialInputUrl: 'web.whatsapp.com',
+      browserMode: 'desktop',
+      minimalChrome: true,
+      showBottomMenu: true,
+      pageTitle: 'WhatsApp Web',
+    },
+  },
   { id: 'contacts', name: 'Contacts', icon: 'person-circle', type: 'ionicon', screen: 'ContactsScreen', color: '#8E8E93' },
   { id: 'files', name: 'Files', icon: 'folder', type: 'ionicon', screen: 'FilesScreen', color: '#007AFF' },
-  { id: 'translate', name: 'Translate', icon: 'language', type: 'ionicon', screen: 'DesktopScreen', color: '#1C1C1E' },
-  { id: 'utilities', name: 'Utilities', icon: 'apps', type: 'ionicon', screen: 'DesktopScreen', color: '#8E8E93' },
+  { id: 'shareapp', name: 'Share App', icon: 'share-social', type: 'ionicon', screen: 'ShareAppScreen', color: '#5856D6' },
   { id: 'calendar-freeform-slot', name: 'Calendar', icon: 'calendar', type: 'custom-calendar', screen: 'CalendarScreen', color: '#FFFFFF' },
   { id: 'appstore-journal-slot', name: 'App Store', icon: 'appstore', type: 'custom-appstore', screen: 'AppStoreScreen', color: 'transparent' },
   { id: 'settings-tips-slot', name: 'Settings', icon: 'settings', type: 'custom-settings', screen: 'SettingsScreen', color: 'transparent' },
@@ -62,17 +118,73 @@ const APPS_IOS = [
 export default function DesktopScreen({ navigation }) {
   const { addRecentApp } = useRecentApps();
   const { wallpaper } = useWallpaper();
-  const { osType } = useOS();
+  const { osType, currentDevice } = useOS();
+  const { currentUser } = useAuth();
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isIosSearchExpanded, setIsIosSearchExpanded] = useState(false);
   const [time, setTime] = useState(new Date());
   const [currentPage, setCurrentPage] = useState(0);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [installedStoreApps, setInstalledStoreApps] = useState([]);
 
   useEffect(() => {
     const timer = setInterval(() => setTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!currentUser?.id || !currentDevice?.phoneNumber) return;
+
+    console.log('[Desktop] unread-count API base:', API_URL);
+
+    const loadUnreadCount = async () => {
+      try {
+        const response = await messageService.unreadCount({
+          userId: currentUser.id,
+          phoneNumber: currentDevice.phoneNumber
+        });
+        setUnreadCount(response.unread_count || 0);
+      } catch (err) {
+        console.log('Failed to load desktop unread count:', {
+          apiUrl: API_URL,
+          message: err?.message,
+          code: err?.code,
+          status: err?.response?.status,
+        });
+      }
+    };
+
+    loadUnreadCount();
+    const interval = setInterval(loadUnreadCount, 10000); // Poll every 10s
+    return () => clearInterval(interval);
+  }, [currentUser?.id, currentDevice?.phoneNumber]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadDeviceApps = async () => {
+      const apps = await loadInstalledApps({
+        userId: currentUser?.id,
+        deviceId: currentDevice?.id,
+      });
+
+      if (isMounted) {
+        setInstalledStoreApps(apps);
+      }
+    };
+
+    loadDeviceApps();
+
+    const unsubscribe = navigation.addListener?.('focus', loadDeviceApps);
+
+    return () => {
+      isMounted = false;
+      if (typeof unsubscribe === 'function') {
+        unsubscribe();
+      }
+    };
+  }, [currentDevice?.id, currentUser?.id, navigation]);
 
   const formatTime = (date) => {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -83,11 +195,15 @@ export default function DesktopScreen({ navigation }) {
   };
 
   const DOCK_APPS = osType === 'ios' ? DOCK_APPS_IOS : DOCK_APPS_ANDROID;
-  const APPS = osType === 'ios' ? APPS_IOS : APPS_ANDROID;
+  const BASE_APPS = osType === 'ios' ? APPS_IOS : APPS_ANDROID;
+  const APPS = [
+    ...BASE_APPS,
+    ...installedStoreApps.filter((app) => !BASE_APPS.some((baseApp) => baseApp.id === app.id)),
+  ];
   const ALL_APPS = [...DOCK_APPS, ...APPS];
 
   const filteredApps = ALL_APPS.filter(app => 
-    app.name.toLowerCase().includes(searchQuery.toLowerCase())
+    String(app.name || '').toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   const chunkArray = (array, size) => {
@@ -100,11 +216,11 @@ export default function DesktopScreen({ navigation }) {
 
   const appsPerPage = osType === 'ios' ? 16 : 16;
   const appPages = chunkArray(filteredApps, appsPerPage);
-  const iosAppPages = chunkArray(APPS_IOS, 16);
+  const iosAppPages = chunkArray(APPS, 16);
   const iosSearchResults = chunkArray(
-    [...DOCK_APPS_IOS, ...APPS_IOS].filter((app, index, array) => (
+    [...DOCK_APPS, ...APPS].filter((app, index, array) => (
       array.findIndex((candidate) => candidate.id === app.id) === index
-    )).filter((app) => app.name.toLowerCase().includes(searchQuery.toLowerCase())),
+    )).filter((app) => String(app.name || '').toLowerCase().includes(searchQuery.toLowerCase())),
     16
   );
 
@@ -122,7 +238,7 @@ export default function DesktopScreen({ navigation }) {
       onPanResponderRelease: (evt, gestureState) => {
         if (gestureState.dy < -50) {
           if (osType === 'ios') {
-            navigation.navigate('RecentAppsScreen');
+            navigation.navigate('MainOS', { screen: 'RecentAppsScreen' });
           } else {
             setDrawerVisible(true);
           }
@@ -210,6 +326,14 @@ export default function DesktopScreen({ navigation }) {
       );
     }
 
+    if (app.type === 'remote-app') {
+      return app.iconUrl ? (
+        <Image source={{ uri: app.iconUrl }} style={styles.remoteAppIconImage} resizeMode="cover" />
+      ) : (
+        <Ionicons name="cube-outline" size={osType === 'ios' ? 28 : 32} color="#ffffff" />
+      );
+    }
+
     if (app.type === 'ionicon') {
       return (
         <Ionicons name={app.icon} size={osType === 'ios' ? 28 : 32} color={app.iconColor || "#ffffff"} />
@@ -248,6 +372,11 @@ export default function DesktopScreen({ navigation }) {
         osType === 'ios' && styles.iconWrapperIos
       ]}>
         {renderAppGlyph(app)}
+        {app.name === 'Messages' && unreadCount > 0 && (
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>{unreadCount}</Text>
+          </View>
+        )}
       </View>
       {!(isDock && osType === 'ios') && (
         <Text style={styles.appLabel} numberOfLines={1}>{app.name}</Text>
@@ -316,7 +445,7 @@ export default function DesktopScreen({ navigation }) {
             <Ionicons name="lock-closed" size={24} color="#fff" />
           </TouchableOpacity>
           <TouchableOpacity
-            onPress={() => navigation.navigate(osType === 'ios' ? 'PowerOffScreen' : 'ShutdownScreen')}
+            onPress={() => navigation.navigate('PowerOffScreen')}
             style={styles.powerBtn}
           >
             <Ionicons name="power" size={20} color="#fff" />
@@ -439,17 +568,24 @@ export default function DesktopScreen({ navigation }) {
   );
 
   if (wallpaper) {
+    const wallpaperSource = typeof wallpaper === 'string' ? { uri: wallpaper } : wallpaper;
+
     return (
-      <ImageBackground source={{ uri: wallpaper }} style={styles.container} resizeMode="cover">
+      <ImageBackground source={wallpaperSource} style={styles.container} resizeMode="cover">
         {Content}
       </ImageBackground>
     );
   }
 
-  const defaultBg = osType === 'ios' ? ['#2c3e50', '#000000'] : ['#1e293b', '#0f172a'];
+  const defaultBg = ['#020713', '#003f9e', '#0088e8', '#18d7ff'];
 
   return (
-    <LinearGradient colors={defaultBg} style={styles.container}>
+    <LinearGradient
+      colors={defaultBg}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+      style={styles.container}
+    >
       {Content}
     </LinearGradient>
   );
@@ -633,6 +769,11 @@ const styles = StyleSheet.create({
   imageBasedIcon: {
     width: 44,
     height: 44,
+  },
+  remoteAppIconImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 14,
   },
   safariIcon: {
     width: 34,
@@ -842,6 +983,26 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 5,
     elevation: 5,
+    position: 'relative',
+  },
+  badge: {
+    position: 'absolute',
+    top: -5,
+    right: -5,
+    backgroundColor: '#ef4444',
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+    borderWidth: 1.5,
+    borderColor: '#ffffff',
+  },
+  badgeText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: 'bold',
   },
   iconWrapperIos: {
     width: 56,

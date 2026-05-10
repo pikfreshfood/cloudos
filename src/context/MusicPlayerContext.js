@@ -3,9 +3,11 @@ import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useOS } from './OSContext';
 import { useAuth } from './AuthContext';
-import { mediaService } from '../services/api';
+import { API_URL, mediaService } from '../services/api';
 
 const MusicPlayerContext = createContext();
+const MUSIC_STATE_FILE_NAME = 'music_player_state.json';
+const POSITION_PERSIST_GRANULARITY_MS = 2000;
 
 const createDefaultState = () => ({
   tracks: [],
@@ -14,6 +16,7 @@ const createDefaultState = () => ({
   duration: 0,
   position: 0,
   currentTrackIndex: -1,
+  lastTrackId: null,
   isMuted: false,
   volume: 1.0,
   repeatMode: 'all',
@@ -26,6 +29,7 @@ export const MusicPlayerProvider = ({ children }) => {
   const playersRef = useRef({});
   const subscriptionsRef = useRef({});
   const statesRef = useRef({});
+  const hydratedDevicesRef = useRef({});
 
   const configureAudioMode = useCallback(async (staysActiveInBackground = true) => {
     await setAudioModeAsync({
@@ -67,6 +71,12 @@ export const MusicPlayerProvider = ({ children }) => {
   const currentState = currentDeviceId
     ? statesByDevice[currentDeviceId] || createDefaultState()
     : createDefaultState();
+
+  const getMusicStatePath = useCallback(() => {
+    const storageDir = getStorageDir();
+    if (!storageDir || !currentDeviceId) return '';
+    return `${storageDir}${MUSIC_STATE_FILE_NAME}`;
+  }, [currentDeviceId, getStorageDir]);
 
   const loadTrackIntoDevice = useCallback(async ({ deviceId, index, shouldPlay = true }) => {
     const deviceState = getDeviceState(deviceId);
@@ -135,6 +145,7 @@ export const MusicPlayerProvider = ({ children }) => {
       setPlaybackStatusUpdate(deviceId, newPlayer);
       updateDeviceState(deviceId, {
         currentTrackIndex: nextIndex,
+        lastTrackId: nextState.tracks[nextIndex]?.id || null,
         isPlaying: true,
         position: 0,
         progress: 0,
@@ -157,7 +168,7 @@ export const MusicPlayerProvider = ({ children }) => {
           });
           audioFiles = response.tracks || [];
         } catch (error) {
-          console.error('Failed to fetch music from API, falling back to local files:', error);
+          console.warn(`Failed to fetch music from API at ${API_URL}; falling back to local files.`, error);
         }
       }
 
@@ -192,15 +203,19 @@ export const MusicPlayerProvider = ({ children }) => {
       }
 
       updateDeviceState(deviceId, (prev) => {
-        const currentTrack = prev.currentTrackIndex >= 0 ? prev.tracks[prev.currentTrackIndex] : null;
-        const restoredIndex = currentTrack
-          ? audioFiles.findIndex((track) => track.id === currentTrack.id)
+        const targetTrackId = prev.lastTrackId
+          || (prev.currentTrackIndex >= 0 ? prev.tracks[prev.currentTrackIndex]?.id : null);
+        const restoredIndex = targetTrackId
+          ? audioFiles.findIndex((track) => track.id === targetTrackId)
           : -1;
+        const fallbackIndex = targetTrackId && audioFiles.length ? 0 : -1;
+        const nextIndex = restoredIndex >= 0 ? restoredIndex : fallbackIndex;
 
         return {
           ...prev,
           tracks: audioFiles,
-          currentTrackIndex: restoredIndex >= 0 ? restoredIndex : (audioFiles.length ? 0 : -1),
+          currentTrackIndex: nextIndex,
+          lastTrackId: nextIndex >= 0 ? audioFiles[nextIndex]?.id || null : null,
         };
       });
 
@@ -223,6 +238,7 @@ export const MusicPlayerProvider = ({ children }) => {
       setPlaybackStatusUpdate(deviceId, player);
       updateDeviceState(deviceId, {
         currentTrackIndex: index,
+        lastTrackId: getDeviceState(deviceId).tracks[index]?.id || null,
         isPlaying: true,
         position: 0,
         progress: 0,
@@ -354,12 +370,96 @@ export const MusicPlayerProvider = ({ children }) => {
       duration: 0,
       position: 0,
       currentTrackIndex: -1,
+      lastTrackId: null,
     }));
   }, [configureAudioMode, currentDeviceId, updateDeviceState]);
 
   useEffect(() => {
-    refreshTracks().catch(() => {});
-  }, [refreshTracks]);
+    let cancelled = false;
+
+    const hydrateCurrentDevice = async () => {
+      if (!currentDeviceId) return;
+
+      hydratedDevicesRef.current[currentDeviceId] = false;
+
+      let persistedState = null;
+      const musicStatePath = getMusicStatePath();
+      if (musicStatePath) {
+        try {
+          const info = await FileSystem.getInfoAsync(musicStatePath);
+          if (info.exists) {
+            const content = await FileSystem.readAsStringAsync(musicStatePath);
+            persistedState = JSON.parse(content);
+          }
+        } catch (error) {
+          console.error('Failed to load saved music state:', error);
+        }
+      }
+
+      if (cancelled) return;
+
+      updateDeviceState(currentDeviceId, (prev) => ({
+        ...prev,
+        position: Number(persistedState?.position) || 0,
+        progress: 0,
+        duration: 0,
+        currentTrackIndex: -1,
+        lastTrackId: persistedState?.lastTrackId || null,
+        isMuted: typeof persistedState?.isMuted === 'boolean' ? persistedState.isMuted : prev.isMuted,
+        volume: typeof persistedState?.volume === 'number' ? persistedState.volume : prev.volume,
+        repeatMode: persistedState?.repeatMode === 'one' ? 'one' : 'all',
+        isPlaying: false,
+      }));
+
+      const tracks = await refreshTracks(currentDeviceId);
+      if (cancelled || !tracks.length) {
+        hydratedDevicesRef.current[currentDeviceId] = true;
+        return;
+      }
+
+      const restoredState = getDeviceState(currentDeviceId);
+      const restoredIndex = restoredState.currentTrackIndex;
+      const restorePosition = Number(persistedState?.position) || 0;
+      const restorePlayback = !!persistedState?.wasPlaying;
+
+      if (restoredIndex >= 0 && restoredState.lastTrackId) {
+        try {
+          const player = await loadTrackIntoDevice({
+            deviceId: currentDeviceId,
+            index: restoredIndex,
+            shouldPlay: restorePlayback,
+          });
+
+          if (player) {
+            if (restorePosition > 0) {
+              player.seekTo(restorePosition / 1000);
+            }
+            setPlaybackStatusUpdate(currentDeviceId, player);
+            updateDeviceState(currentDeviceId, (prev) => ({
+              ...prev,
+              isPlaying: restorePlayback,
+              position: restorePosition,
+              progress: prev.duration ? restorePosition / prev.duration : 0,
+            }));
+          }
+        } catch (error) {
+          console.error('Failed to restore saved music session:', error);
+        }
+      }
+
+      hydratedDevicesRef.current[currentDeviceId] = true;
+    };
+
+    hydrateCurrentDevice().catch(() => {
+      if (currentDeviceId) {
+        hydratedDevicesRef.current[currentDeviceId] = true;
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentDeviceId, getDeviceState, getMusicStatePath, loadTrackIntoDevice, refreshTracks, setPlaybackStatusUpdate, updateDeviceState]);
 
   useEffect(() => {
     const pauseOtherDevices = async () => {
@@ -399,6 +499,57 @@ export const MusicPlayerProvider = ({ children }) => {
   const currentTrack = currentState.currentTrackIndex >= 0
     ? currentState.tracks[currentState.currentTrackIndex]
     : null;
+  const persistedPositionBucket = currentState.currentTrackIndex >= 0
+    ? Math.floor(currentState.position / POSITION_PERSIST_GRANULARITY_MS) * POSITION_PERSIST_GRANULARITY_MS
+    : 0;
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    const persistCurrentState = async () => {
+      if (!currentDeviceId || !hydratedDevicesRef.current[currentDeviceId]) return;
+
+      const musicStatePath = getMusicStatePath();
+      if (!musicStatePath) return;
+
+      const payload = {
+        lastTrackId: currentTrack?.id || currentState.lastTrackId || null,
+        position: currentState.currentTrackIndex >= 0 ? currentState.position : 0,
+        volume: currentState.volume,
+        isMuted: currentState.isMuted,
+        repeatMode: currentState.repeatMode,
+        wasPlaying: currentState.currentTrackIndex >= 0 && currentState.isPlaying,
+      };
+
+      try {
+        if (!isCancelled) {
+          await FileSystem.writeAsStringAsync(musicStatePath, JSON.stringify(payload));
+        }
+      } catch (error) {
+        console.error('Failed to save music player state:', error);
+      }
+    };
+
+    const timeoutId = setTimeout(() => {
+      persistCurrentState().catch(() => {});
+    }, 250);
+
+    return () => {
+      isCancelled = true;
+      clearTimeout(timeoutId);
+    };
+  }, [
+    currentDeviceId,
+    currentState.currentTrackIndex,
+    currentState.isMuted,
+    currentState.isPlaying,
+    currentState.lastTrackId,
+    currentState.repeatMode,
+    currentState.volume,
+    currentTrack?.id,
+    getMusicStatePath,
+    persistedPositionBucket,
+  ]);
 
   const value = useMemo(() => ({
     tracks: currentState.tracks,

@@ -6,7 +6,7 @@ import { useOS } from '../context/OSContext';
 import { useMusicPlayer } from '../context/MusicPlayerContext';
 import { useRecentApps } from '../context/RecentAppsContext';
 
-export default function ShutdownScreen({ navigation }) {
+export default function ShutdownScreen({ navigation, route }) {
   const { osType, currentDeviceId, clearCurrentDevice } = useOS();
   const { stopDevicePlayback } = useMusicPlayer();
   const { clearRecentAppsForDevice } = useRecentApps();
@@ -14,6 +14,7 @@ export default function ShutdownScreen({ navigation }) {
   const hasShutdownRef = useRef(false);
   const shutdownOsTypeRef = useRef(osType);
   const shutdownDeviceIdRef = useRef(currentDeviceId);
+  const mode = route.params?.mode || 'shutdown';
 
   useEffect(() => {
     if (hasShutdownRef.current) {
@@ -41,17 +42,21 @@ export default function ShutdownScreen({ navigation }) {
       useNativeDriver: false,
     }).start();
 
-    // Return to device selection after shutdown completes.
+    // After animation completes
     const timer = setTimeout(() => {
-      clearCurrentDevice();
-      navigation.reset({
-        index: 0,
-        routes: [{ name: 'DashboardScreen' }],
-      });
+      if (mode === 'restart') {
+        navigation.replace('BootScreen');
+      } else {
+        clearCurrentDevice();
+        navigation.reset({
+          index: 0,
+          routes: [{ name: 'DashboardScreen' }],
+        });
+      }
     }, 3500);
 
     return () => clearTimeout(timer);
-  }, [clearCurrentDevice, clearRecentAppsForDevice, navigation, progressAnim, stopDevicePlayback]);
+  }, [clearCurrentDevice, clearRecentAppsForDevice, navigation, progressAnim, stopDevicePlayback, mode]);
 
   const widthInterpolated = progressAnim.interpolate({
     inputRange: [0, 10, 30, 60, 80, 100],
@@ -74,15 +79,24 @@ export default function ShutdownScreen({ navigation }) {
       <View style={styles.content}>
         <View style={styles.logoContainer}>
           <View style={styles.iconWrapper}>
-            <Ionicons name="power" size={48} color="#ef4444" />
+            <Ionicons 
+              name={mode === 'restart' ? "refresh" : "power"} 
+              size={48} 
+              color={mode === 'restart' ? "#3b82f6" : "#ef4444"} 
+            />
           </View>
         </View>
 
         <View style={styles.progressContainer}>
           <View style={styles.progressBarBg}>
-            <Animated.View style={[styles.progressBarFill, { width: widthInterpolated }]} />
+            <Animated.View style={[
+              styles.progressBarFill, 
+              { width: widthInterpolated, backgroundColor: mode === 'restart' ? "#3b82f6" : "#ef4444" }
+            ]} />
           </View>
-          <Text style={styles.startingText}>Shutting down...</Text>
+          <Text style={styles.startingText}>
+            {mode === 'restart' ? 'Restarting system...' : 'Shutting down...'}
+          </Text>
         </View>
       </View>
     </SafeAreaView>

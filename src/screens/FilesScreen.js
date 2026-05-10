@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, Modal, TextInput, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, Modal, TextInput, Alert, ActivityIndicator, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -10,11 +10,13 @@ import { useOS } from '../context/OSContext';
 import { useAuth } from '../context/AuthContext';
 import * as DocumentPicker from 'expo-document-picker';
 import { ensureDeviceHasSpace, getDeviceStorageLimitBytes, getDeviceStorageSnapshot } from '../utils/deviceStorage';
-import { fileService } from '../services/api';
+import { resolveLocalRecipientDevice } from '../utils/recipientDevice';
+import { API_URL, fileService, messageService } from '../services/api';
+import { installApk } from '../native/apkInstaller';
 
 export default function FilesScreen({ navigation }) {
   const { getStorageDir, osType, currentDevice } = useOS();
-  const { currentUser } = useAuth();
+  const { accounts, currentUser } = useAuth();
   const [currentPath, setCurrentPath] = useState(getStorageDir() || '');
   const [history, setHistory] = useState([]);
   const [files, setFiles] = useState([]);
@@ -38,6 +40,13 @@ export default function FilesScreen({ navigation }) {
   const [pickerHistory, setPickerHistory] = useState([]);
   const [pickerFolders, setPickerFolders] = useState([]);
   const [totalStorageSize, setTotalStorageSize] = useState(0);
+
+  // Sharing
+  const [shareModalVisible, setShareModalVisible] = useState(false);
+  const [recipientPhone, setRecipientPhone] = useState('');
+  const [isSharing, setIsSharing] = useState(false);
+  const [shareProgress, setShareProgress] = useState(0);
+
   const [uploadState, setUploadState] = useState({
     visible: false,
     currentFileName: '',
@@ -48,6 +57,7 @@ export default function FilesScreen({ navigation }) {
   const MAX_STORAGE_BYTES = getDeviceStorageLimitBytes(currentDevice);
   const MAX_STORAGE_MB = Math.round(MAX_STORAGE_BYTES / (1024 * 1024));
   const hasApiContext = !!currentUser?.id && !!currentDevice?.id;
+  const isApkFile = (name = '') => name.toLowerCase().endsWith('.apk');
 
   useFocusEffect(
     useCallback(() => {
@@ -59,7 +69,7 @@ export default function FilesScreen({ navigation }) {
   const calculateTotalStorage = async () => {
     try {
       if (hasApiContext) {
-        setTotalStorageSize(0);
+        // Storage size is updated via the API response in loadFiles
         return;
       }
 
@@ -153,7 +163,12 @@ export default function FilesScreen({ navigation }) {
       return;
     }
 
-    console.log('Loading files from Laravel API', { userId: currentUser.id, deviceId: currentDevice.id, path });
+    console.log('Loading files from Laravel API', {
+      userId: currentUser.id,
+      deviceId: currentDevice.id,
+      path,
+      apiUrl: API_URL,
+    });
 
     try {
       setIsLoading(true);
@@ -170,6 +185,10 @@ export default function FilesScreen({ navigation }) {
 
       console.log('API response:', response);
 
+      if (response.used_space !== undefined) {
+        setTotalStorageSize(response.used_space);
+      }
+
       const normalized = (response.files || []).map((item) => ({
         id: item.id || `${item.type}:${item.name}`,
         name: item.name,
@@ -183,9 +202,19 @@ export default function FilesScreen({ navigation }) {
 
       setFiles(normalized);
     } catch (error) {
-      console.error('Failed to load files from API:', error);
+      console.error('Failed to load files from API:', {
+        apiUrl: API_URL,
+        message: error?.message,
+        code: error?.code,
+        status: error?.response?.status,
+      });
       setFiles([]);
-      Alert.alert('Cloud files unavailable', 'The app could not load your Laravel-backed files right now.');
+      const status = error?.response?.status;
+      const apiMessage = error?.response?.data?.message;
+      const details = apiMessage
+        ? `${apiMessage}${status ? ` (HTTP ${status})` : ''}`
+        : `The app could not load your Laravel-backed files right now${status ? ` (HTTP ${status})` : ''}.`;
+      Alert.alert('Cloud files unavailable', details);
     } finally {
       setIsLoading(false);
     }
@@ -308,7 +337,7 @@ export default function FilesScreen({ navigation }) {
       setHistory([...history, currentPath]);
       setCurrentPath(`${currentPath}${item.name}/`);
     } else {
-      const lowerName = item.name.toLowerCase();
+      const lowerName = String(item.name || '').toLowerCase();
 
       if (lowerName.endsWith('.pdf')) {
         navigation.navigate('PdfReaderScreen', {
@@ -338,8 +367,31 @@ export default function FilesScreen({ navigation }) {
         return;
       }
 
+      if (Platform.OS === 'android' && isApkFile(lowerName)) {
+        handleInstallApk(item);
+        return;
+      }
+
       Alert.alert('File', `Selected file: ${item.name}`);
     }
+  };
+
+  const materializeFileForDevice = async (targetFile, folderName = 'exports') => {
+    if (!hasApiContext || !targetFile.remotePath) {
+      return targetFile.path;
+    }
+
+    const targetDir = `${FileSystem.cacheDirectory}${folderName}/`;
+    await FileSystem.makeDirectoryAsync(targetDir, { intermediates: true });
+    const localTargetPath = `${targetDir}${targetFile.name}`;
+    const downloadUrl = fileService.getDownloadUrl({
+      userId: currentUser.id,
+      deviceId: currentDevice.id,
+      path: targetFile.remotePath,
+    });
+
+    await FileSystem.downloadAsync(downloadUrl, localTargetPath);
+    return localTargetPath;
   };
 
   const handleAddPress = () => {
@@ -358,7 +410,7 @@ export default function FilesScreen({ navigation }) {
   const handleUploadFile = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({ 
-        copyToCacheDirectory: false,
+        copyToCacheDirectory: true,
         multiple: true 
       });
       if (result.canceled === false && result.assets && result.assets.length > 0) {
@@ -435,8 +487,18 @@ export default function FilesScreen({ navigation }) {
         Alert.alert('Success', `${result.assets.length} file(s) uploaded successfully`);
       }
     } catch (error) {
-      console.error(error);
-      Alert.alert('Error', 'Failed to upload files');
+      const rawData = error?.response?.data;
+      const isHtmlError = typeof rawData === 'string' && /<!doctype html|<html/i.test(rawData);
+      const status = error?.response?.status;
+      const serverMessage = isHtmlError
+        ? `The live server rejected the upload${status ? ` (HTTP ${status})` : ''}. Please upload the latest API package and try again.`
+        : rawData?.message || error?.message || 'Failed to upload files';
+      console.warn('Failed to upload files:', {
+        message: error?.message,
+        status,
+        serverMessage,
+      });
+      Alert.alert('Upload failed', serverMessage);
     } finally {
       setIsLoading(false);
       setTimeout(() => {
@@ -463,8 +525,13 @@ export default function FilesScreen({ navigation }) {
       loadFiles(currentPath);
       setInputModalVisible(false);
     } catch (error) {
-      console.error(error);
-      Alert.alert('Error', 'Failed to create folder');
+      console.error('Failed to create folder:', {
+        message: error?.message,
+        status: error?.response?.status,
+        data: error?.response?.data,
+      });
+      const serverMessage = error?.response?.data?.message || error?.message || 'Failed to create folder';
+      Alert.alert('Folder failed', serverMessage);
     }
   };
 
@@ -641,21 +708,7 @@ export default function FilesScreen({ navigation }) {
       }
 
       const targetFile = filesOnly[0];
-      let sharePath = targetFile.path;
-
-      if (hasApiContext && targetFile.remotePath) {
-        const exportDir = `${FileSystem.cacheDirectory}exports/`;
-        await FileSystem.makeDirectoryAsync(exportDir, { intermediates: true });
-        const downloadTarget = `${exportDir}${targetFile.name}`;
-        const downloadUrl = fileService.getDownloadUrl({
-          userId: currentUser.id,
-          deviceId: currentDevice.id,
-          path: targetFile.remotePath,
-        });
-
-        await FileSystem.downloadAsync(downloadUrl, downloadTarget);
-        sharePath = downloadTarget;
-      }
+      const sharePath = await materializeFileForDevice(targetFile, 'exports');
 
       await Sharing.shareAsync(sharePath, {
         dialogTitle: `Export ${filesOnly[0].name}`,
@@ -665,6 +718,111 @@ export default function FilesScreen({ navigation }) {
     } catch (error) {
       console.error(error);
       Alert.alert('Error', 'Failed to export file to main phone');
+    }
+  };
+
+  const handleShareToUser = async () => {
+    if (!recipientPhone.trim()) {
+      Alert.alert('Error', 'Please enter the recipient device phone number.');
+      return;
+    }
+
+    const itemsToShare = isSelectionMode ? selectedFiles : [selectedFile];
+    if (!itemsToShare || itemsToShare.length === 0) return;
+
+    try {
+      setIsSharing(true);
+      setShareProgress(0.1);
+
+      const localRecipientDevice = resolveLocalRecipientDevice({
+        accounts,
+        currentUser,
+        currentDevice,
+        phoneNumber: recipientPhone,
+      });
+
+      if (localRecipientDevice?.isCurrentDevice) {
+        Alert.alert('Same device', 'Choose another device number, not the current device.');
+        setIsSharing(false);
+        return;
+      }
+
+      // 1. Check if user exists, unless the number belongs to another local device.
+      const checkResponse = localRecipientDevice
+        ? {
+            exists: true,
+            id: localRecipientDevice.userId,
+            name: localRecipientDevice.name,
+            phone_number: localRecipientDevice.phoneNumber,
+          }
+        : await messageService.checkNumber({ phoneNumber: recipientPhone });
+      setShareProgress(0.3);
+
+      if (!checkResponse.exists) {
+        Alert.alert('Not found', 'The recipient device phone number does not exist on our records.');
+        setIsSharing(false);
+        return;
+      }
+
+      setShareProgress(0.5);
+
+      // 2. Perform the share
+      const shareResponse = await fileService.share({
+        userId: currentUser.id,
+        deviceId: currentDevice.id,
+        recipientPhoneNumber: recipientPhone,
+        recipientUserId: localRecipientDevice?.userId,
+        recipientDeviceId: localRecipientDevice?.deviceId,
+        recipientDeviceStorage: localRecipientDevice?.storage,
+        items: itemsToShare.map(item => ({
+          path: item.remotePath || item.path,
+          type: item.type,
+          name: item.name,
+        })),
+      });
+
+      setShareProgress(1);
+      
+      setTimeout(() => {
+        setIsSharing(false);
+        setShareModalVisible(false);
+        setRecipientPhone('');
+        setIsSelectionMode(false);
+        setSelectedFiles([]);
+        setActionModalVisible(false);
+        Alert.alert('Success', shareResponse.message);
+      }, 500);
+
+    } catch (error) {
+      console.error('Sharing error:', error);
+      setIsSharing(false);
+      const message = error?.response?.data?.message || 'Failed to share files. Please try again.';
+      Alert.alert('Sharing failed', message);
+    }
+  };
+
+  const handleInstallApk = async (file = selectedFile) => {
+    if (!file) return;
+
+    if (Platform.OS !== 'android') {
+      Alert.alert('Unavailable', 'APK installation is only available on Android devices.');
+      return;
+    }
+
+    if (file.type !== 'file' || !isApkFile(file.name)) {
+      Alert.alert('Unavailable', 'Choose an APK file to install.');
+      return;
+    }
+
+    try {
+      const apkPath = await materializeFileForDevice(file, 'apk-installs');
+      await installApk(apkPath);
+      setActionModalVisible(false);
+    } catch (error) {
+      Alert.alert(
+        'Install failed',
+        error?.message || 'Could not open the Android package installer.'
+      );
     }
   };
 
@@ -726,8 +884,11 @@ export default function FilesScreen({ navigation }) {
             <TouchableOpacity style={styles.addBtn} onPress={() => openPicker('copy')} disabled={selectedFiles.length === 0}>
               <Ionicons name="copy" size={24} color={selectedFiles.length === 0 ? "#cbd5e1" : "#0f172a"} />
             </TouchableOpacity>
+            <TouchableOpacity style={styles.addBtn} onPress={() => setShareModalVisible(true)} disabled={selectedFiles.length === 0}>
+              <Ionicons name="share-social-outline" size={24} color={selectedFiles.length === 0 ? "#cbd5e1" : "#0f172a"} />
+            </TouchableOpacity>
             <TouchableOpacity style={styles.addBtn} onPress={handleExportToPhone} disabled={selectedFiles.length === 0}>
-              <Ionicons name="share-outline" size={24} color={selectedFiles.length === 0 ? "#cbd5e1" : "#0f172a"} />
+              <Ionicons name="phone-portrait-outline" size={24} color={selectedFiles.length === 0 ? "#cbd5e1" : "#0f172a"} />
             </TouchableOpacity>
             <TouchableOpacity style={styles.addBtn} onPress={handleDelete} disabled={selectedFiles.length === 0}>
               <Ionicons name="trash" size={24} color={selectedFiles.length === 0 ? "#cbd5e1" : "#ef4444"} />
@@ -750,31 +911,31 @@ export default function FilesScreen({ navigation }) {
 
       <View style={styles.content}>
         {history.length === 0 && (
-          !hasApiContext && (
-            <LinearGradient
-              colors={['#0f172a', '#1e293b']}
-              style={styles.storageCard}
-            >
-              <View style={styles.storageHeader}>
-                <Ionicons name="server" size={24} color="#38bdf8" />
-                <Text style={styles.storageTitle}>Internal Storage</Text>
+          <LinearGradient
+            colors={['#0f172a', '#1e293b']}
+            style={styles.storageCard}
+          >
+            <View style={styles.storageHeader}>
+              <Ionicons name={hasApiContext ? "cloud" : "server"} size={24} color="#38bdf8" />
+              <Text style={styles.storageTitle}>{hasApiContext ? 'Cloud Storage' : 'Internal Storage'}</Text>
+            </View>
+            <View style={styles.progressContainer}>
+              <View style={styles.progressBarBg}>
+                <LinearGradient
+                  colors={['#38bdf8', '#3b82f6']}
+                  style={[styles.progressBarFill, { width: `${Math.min((totalStorageSize / MAX_STORAGE_BYTES) * 100, 100)}%` }]}
+                />
               </View>
-              <View style={styles.progressContainer}>
-                <View style={styles.progressBarBg}>
-                  <LinearGradient
-                    colors={['#38bdf8', '#3b82f6']}
-                    style={[styles.progressBarFill, { width: `${Math.min((totalStorageSize / MAX_STORAGE_BYTES) * 100, 100)}%` }]}
-                  />
-                </View>
+            </View>
+            <View style={styles.storageStats}>
+              <View>
+                <Text style={styles.storageText}>{hasApiContext ? 'Cloud Device' : 'Local Device'}</Text>
               </View>
-              <View style={styles.storageStats}>
-                <Text style={styles.storageText}>Local Device</Text>
-                <Text style={styles.storageText}>
-                  {(totalStorageSize / (1024 * 1024)).toFixed(2)} MB / {MAX_STORAGE_MB} MB
-                </Text>
-              </View>
-            </LinearGradient>
-          )
+              <Text style={styles.storageText}>
+                {(totalStorageSize / (1024 * 1024)).toFixed(2)} MB / {MAX_STORAGE_MB} MB
+              </Text>
+            </View>
+          </LinearGradient>
         )}
 
         <View style={styles.listHeader}>
@@ -837,6 +998,7 @@ export default function FilesScreen({ navigation }) {
               value={inputValue}
               onChangeText={setInputValue}
               placeholder={inputType === 'createFolder' ? 'Folder Name' : 'New Name'}
+              placeholderTextColor="#64748b"
               autoFocus
             />
             <View style={styles.modalActions}>
@@ -868,16 +1030,76 @@ export default function FilesScreen({ navigation }) {
               <Ionicons name="copy" size={24} color="#0f172a" />
               <Text style={styles.actionText}>Copy</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.actionItem} onPress={handleExportToPhone}>
-              <Ionicons name="share-outline" size={24} color="#0f172a" />
-              <Text style={styles.actionText}>Export to Phone</Text>
+            <TouchableOpacity style={styles.actionItem} onPress={() => setShareModalVisible(true)}>
+              <Ionicons name="share-social-outline" size={24} color="#0f172a" />
+              <Text style={styles.actionText}>Share to Device</Text>
             </TouchableOpacity>
+            <TouchableOpacity style={styles.actionItem} onPress={handleExportToPhone}>
+              <Ionicons name="phone-portrait-outline" size={24} color="#0f172a" />
+              <Text style={styles.actionText}>Export to Main Phone</Text>
+            </TouchableOpacity>
+            {selectedFile?.type === 'file' && isApkFile(selectedFile?.name || '') ? (
+              <TouchableOpacity style={styles.actionItem} onPress={() => handleInstallApk(selectedFile)}>
+                <Ionicons name="download-outline" size={24} color="#0f172a" />
+                <Text style={styles.actionText}>Install APK</Text>
+              </TouchableOpacity>
+            ) : null}
             <TouchableOpacity style={[styles.actionItem, { borderBottomWidth: 0 }]} onPress={handleDelete}>
               <Ionicons name="trash" size={24} color="#ef4444" />
               <Text style={[styles.actionText, { color: '#ef4444' }]}>Delete</Text>
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
+      </Modal>
+
+      {/* Share Modal */}
+      <Modal visible={shareModalVisible} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.inputModalContent}>
+            <Text style={styles.modalTitle}>Share to Device</Text>
+            <Text style={styles.modalSubtitle}>Enter the recipient's phone number</Text>
+            <TextInput
+              style={styles.textInput}
+              value={recipientPhone}
+              onChangeText={setRecipientPhone}
+              placeholder="e.g. 08012345678"
+              placeholderTextColor="#64748b"
+              keyboardType="phone-pad"
+              autoFocus
+              editable={!isSharing}
+            />
+            
+            {isSharing && (
+              <View style={styles.shareProgressContainer}>
+                <View style={styles.shareProgressBarBg}>
+                  <View style={[styles.shareProgressBarFill, { width: `${shareProgress * 100}%` }]} />
+                </View>
+                <Text style={styles.shareProgressText}>Sharing... {Math.round(shareProgress * 100)}%</Text>
+              </View>
+            )}
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity 
+                style={styles.modalBtn} 
+                onPress={() => { setShareModalVisible(false); setRecipientPhone(''); setIsSharing(false); }}
+                disabled={isSharing}
+              >
+                <Text style={styles.modalBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.modalBtn, styles.modalBtnPrimary, isSharing && styles.modalBtnDisabled]} 
+                onPress={handleShareToUser}
+                disabled={isSharing}
+              >
+                {isSharing ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <Text style={styles.modalBtnTextLight}>Share</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
       </Modal>
 
       {/* Folder Picker Modal */}
@@ -1169,23 +1391,52 @@ const styles = StyleSheet.create({
   uploadMetaRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: 12,
+    marginTop: 8,
   },
   uploadMetaText: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#64748b',
+    fontWeight: '500',
+  },
+  shareProgressContainer: {
+    marginTop: 8,
+    marginBottom: 16,
+  },
+  shareProgressBarBg: {
+    height: 6,
+    backgroundColor: '#e2e8f0',
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  shareProgressBarFill: {
+    height: '100%',
+    backgroundColor: '#3b82f6',
+    borderRadius: 3,
+  },
+  shareProgressText: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 6,
+    textAlign: 'center',
     fontWeight: '600',
   },
-  modalTitle: {
+  actionSheet: {
     fontSize: 18,
     fontWeight: 'bold',
     color: '#0f172a',
     marginBottom: 16,
   },
+  modalSubtitle: {
+    fontSize: 13,
+    color: '#64748b',
+    marginBottom: 12,
+  },
   textInput: {
     borderWidth: 1,
     borderColor: '#cbd5e1',
     borderRadius: 8,
+    backgroundColor: '#ffffff',
+    color: '#0f172a',
     padding: 12,
     fontSize: 16,
     marginBottom: 20,
@@ -1202,6 +1453,9 @@ const styles = StyleSheet.create({
   },
   modalBtnPrimary: {
     backgroundColor: '#3b82f6',
+  },
+  modalBtnDisabled: {
+    opacity: 0.5,
   },
   modalBtnText: {
     color: '#64748b',

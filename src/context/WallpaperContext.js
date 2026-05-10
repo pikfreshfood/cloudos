@@ -4,8 +4,8 @@ import { useOS } from './OSContext';
 
 export const WallpaperContext = createContext();
 
+const DEFAULT_WALLPAPER = null;
 const DEFAULT_IOS_WALLPAPER = 'https://images.unsplash.com/photo-1557682224-5b8590cd9ec5?q=80&w=1000&auto=format&fit=crop';
-const DEFAULT_ANDROID_WALLPAPER = null;
 
 export const WallpaperProvider = ({ children }) => {
   const [wallpapersByDevice, setWallpapersByDevice] = useState({});
@@ -15,7 +15,7 @@ export const WallpaperProvider = ({ children }) => {
     loadWallpaper();
   }, [currentDeviceId, osType]);
 
-  const getDefaultWallpaper = () => (osType === 'ios' ? DEFAULT_IOS_WALLPAPER : DEFAULT_ANDROID_WALLPAPER);
+  const getDefaultWallpaper = () => (osType === 'ios' ? DEFAULT_IOS_WALLPAPER : DEFAULT_WALLPAPER);
 
   const loadWallpaper = async () => {
     const storageDir = getStorageDir();

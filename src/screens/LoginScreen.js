@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet,  KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../context/AuthContext';
+
+const cloudOsLogo = require('../../assets/cloud-os-logo.png');
 
 export default function LoginScreen({ navigation }) {
   const [email, setEmail] = useState('');
@@ -41,11 +43,9 @@ export default function LoginScreen({ navigation }) {
           style={styles.keyboardView}
         >
           <View style={styles.logoContainer}>
-            <View style={styles.logoCircle}>
-              <Ionicons name="cloud-done" size={48} color="#38bdf8" />
-            </View>
-            <Text style={styles.appName}>Cloud Mobile</Text>
-            <Text style={styles.subtitle}>Your virtual device in the cloud</Text>
+            <Image source={cloudOsLogo} style={styles.logoImage} resizeMode="contain" />
+            <Text style={styles.appName}>Cloud OS</Text>
+            <Text style={styles.subtitle}>Your mobile workspace for files, apps, and messaging</Text>
           </View>
 
           <View style={styles.formContainer}>
@@ -57,6 +57,9 @@ export default function LoginScreen({ navigation }) {
                 placeholderTextColor="#64748b"
                 keyboardType="email-address"
                 autoCapitalize="none"
+                autoCorrect={false}
+                autoComplete="email"
+                textContentType="emailAddress"
                 value={email}
                 onChangeText={setEmail}
               />
@@ -69,19 +72,22 @@ export default function LoginScreen({ navigation }) {
                 placeholder="Password"
                 placeholderTextColor="#64748b"
                 secureTextEntry
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoComplete="password"
+                textContentType="password"
                 value={password}
                 onChangeText={setPassword}
               />
             </View>
 
-            <TouchableOpacity style={styles.forgotPassword}>
+            <TouchableOpacity style={styles.forgotPassword} onPress={() => navigation.navigate('ForgotPasswordScreen', { email })}>
               <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
             </TouchableOpacity>
-
             <TouchableOpacity 
               style={styles.loginBtn}
               onPress={handleLogin}
-              disabled={isLoading || !email || !password}
+              disabled={isLoading || !email.trim() || !password.trim()}
             >
               <LinearGradient
                 colors={['#3b82f6', '#2563eb']}
@@ -102,6 +108,7 @@ export default function LoginScreen({ navigation }) {
               </TouchableOpacity>
             </View>
           </View>
+
         </KeyboardAvoidingView>
       </LinearGradient>
     </SafeAreaView>
@@ -114,27 +121,22 @@ const styles = StyleSheet.create({
   },
   background: {
     flex: 1,
-    justifyContent: 'center',
   },
   keyboardView: {
     flex: 1,
     justifyContent: 'center',
-    padding: 24,
+    paddingHorizontal: 24,
+    paddingTop: 24,
+    paddingBottom: 88,
   },
   logoContainer: {
     alignItems: 'center',
     marginBottom: 48,
   },
-  logoCircle: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    backgroundColor: 'rgba(56, 189, 248, 0.1)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(56, 189, 248, 0.2)',
+  logoImage: {
+    width: 190,
+    height: 118,
+    marginBottom: 10,
   },
   appName: {
     fontSize: 28,
@@ -153,16 +155,17 @@ const styles = StyleSheet.create({
     padding: 24,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.05)',
+    marginBottom: 20,
   },
   inputGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(15, 23, 42, 0.6)',
+    backgroundColor: '#ffffff',
     borderRadius: 16,
     marginBottom: 16,
     paddingHorizontal: 16,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: '#e2e8f0',
   },
   inputIcon: {
     marginRight: 12,
@@ -170,7 +173,7 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     height: 56,
-    color: '#ffffff',
+    color: '#0f172a',
     fontSize: 16,
   },
   forgotPassword: {

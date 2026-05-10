@@ -1,52 +1,97 @@
 {
   "expo": {
-    "name": "cloud_mobile",
+    "name": "Cloud OS",
     "slug": "cloud_mobile",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/cloud-os-app-icon.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/cloud-os-splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#020713"
     },
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "com.cloudos.mobile",
       "infoPlist": {
-        "NSCameraUsageDescription": "Allow Cloud Mobile to open your camera and save photos into your files.",
-        "NSMicrophoneUsageDescription": "Allow Cloud Mobile to use your microphone when recording videos."
-      }
+        "NSCameraUsageDescription": "Allow Cloud OS to use your camera for video calls and camera features.",
+        "NSMicrophoneUsageDescription": "Allow Cloud OS to use your microphone for voice and video calls.",
+        "UIBackgroundModes": [
+          "remote-notification",
+          "remote-notification"
+        ]
+      },
+      "bitcode": false
     },
     "android": {
-      "package": "com.cloudmobile.app",
-      "versionCode": 1,
+      "package": "com.cloudos.mobile",
+      "versionCode": 4,
+      "usesCleartextTraffic": true,
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "foregroundImage": "./assets/cloud-os-adaptive-foreground.png",
+        "backgroundColor": "#020713"
       },
       "edgeToEdgeEnabled": true,
       "permissions": [
+        "android.permission.CALL_PHONE",
         "android.permission.CAMERA",
-        "android.permission.RECORD_AUDIO"
+        "android.permission.RECORD_AUDIO",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.INTERNET",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.VIBRATE",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.USE_FULL_SCREEN_INTENT",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.WAKE_LOCK",
+        "android.permission.BLUETOOTH",
+        "android.permission.REQUEST_INSTALL_PACKAGES",
+        "android.permission.CALL_PHONE",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.INTERNET",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.VIBRATE",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.USE_FULL_SCREEN_INTENT",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.WAKE_LOCK",
+        "android.permission.BLUETOOTH",
+        "android.permission.REQUEST_INSTALL_PACKAGES"
       ]
     },
     "plugins": [
       "expo-dev-client",
       "expo-camera",
-      "expo-sharing",
-      "@config-plugins/react-native-webrtc",
-      "expo-video"
+      "expo-video",
+      "expo-web-browser",
+      "expo-font",
+      "expo-asset",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/cloud-os-app-icon.png",
+          "color": "#0284ff",
+          "defaultChannel": "messages"
+        }
+      ]
     ],
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/cloud-os-favicon.png"
     },
     "extra": {
+      "apiUrl": "https://cloudos.ng/api",
       "eas": {
-        "projectId": "c7c5ef63-73c6-47a6-b924-21d8d9ae52e0"
+        "projectId": "ddaba80b-6b3f-454f-8a74-9b122782b8af"
       }
     },
-    "owner": "anosupermax"
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/ddaba80b-6b3f-454f-8a74-9b122782b8af"
+    }
   }
 }
