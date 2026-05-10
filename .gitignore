@@ -1,0 +1,39 @@
+# Laravel
+api_endpoint/node_modules
+api_endpoint/vendor
+api_endpoint/.env
+api_endpoint/.env.local
+api_endpoint/.env.*.local
+api_endpoint/public/storage
+api_endpoint/storage/*.key
+api_endpoint/storage/logs/*.log
+api_endpoint/storage/framework/views/*.php
+api_endpoint/storage/framework/cache/data/*
+api_endpoint/storage/framework/sessions/*
+api_endpoint/bootstrap/cache/*.php
+api_endpoint.phpunit.result.cache
+api_endpoint/Homestead.json
+api_endpoint/Homestead.yaml
+api_endpoint/.vagrant
+api_endpoint/.idea
+api_endpoint/.vscode
+api_endpoint/*.swp
+api_endpoint/*.swo
+api_endpoint/*~
+
+# React Native
+cloud_mobile/node_modules
+cloud_mobile/.expo
+cloud_mobile/dist
+cloud_mobile/web-build
+cloud_mobile/.env
+cloud_mobile/.env.local
+cloud_mobile/.env.*.local
+cloud_mobile/.DS_Store
+cloud_mobile/coverage
+
+# Temporary files
+run_migration.php
+server_upload_package
+cloudos_server_update.zip
+server_files_to_upload.txt

@@ -1,0 +1,194 @@
+<?php
+
+namespace App\Http\Controllers\Api;
+
+use App\Http\Controllers\Controller;
+use App\Models\Contact;
+use App\Models\User;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+
+class ContactController extends Controller
+{
+    public function index(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'user_id' => ['required', 'integer', 'exists:users,id'],
+        ]);
+
+        $contacts = Contact::query()
+            ->with('contactUser:id,name,phone_number')
+            ->where('user_id', $validated['user_id'])
+            ->orderBy('name')
+            ->get()
+            ->map(fn (Contact $contact) => $this->mapContact($contact))
+            ->values();
+
+        return response()->json(['contacts' => $contacts]);
+    }
+
+    public function store(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'user_id' => ['required', 'integer', 'exists:users,id'],
+            'name' => ['required', 'string', 'max:255'],
+            'phone_number' => ['required', 'string', 'max:50'],
+        ]);
+
+        $validated['phone_number'] = preg_replace('/\D+/', '', trim($validated['phone_number'])) ?? '';
+
+        if ($validated['phone_number'] === '') {
+            return response()->json([
+                'message' => 'Phone number is required.',
+                'errors' => [
+                    'phone_number' => ['Phone number is required.'],
+                ],
+            ], 422);
+        }
+
+        $linkedDevice = $this->findDeviceByPhoneNumber($validated['phone_number']);
+        $linkedUser = $linkedDevice
+            ? User::find($linkedDevice->user_id)
+            : User::query()
+            ->where('phone_number', $validated['phone_number'])
+            ->first();
+
+        $contact = Contact::query()->updateOrCreate(
+            [
+                'user_id' => $validated['user_id'],
+                'phone_number' => $validated['phone_number'],
+            ],
+            [
+                'name' => trim($validated['name']),
+                'contact_user_id' => $linkedUser?->id,
+            ]
+        );
+
+        $contact->load('contactUser:id,name,phone_number');
+
+        return response()->json([
+            'message' => 'Contact saved successfully.',
+            'contact' => $this->mapContact($contact),
+        ], 201);
+    }
+
+    public function destroy(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'user_id' => ['required', 'integer', 'exists:users,id'],
+            'contact_id' => ['required', 'integer', 'exists:contacts,id'],
+        ]);
+
+        $contact = Contact::query()
+            ->where('user_id', $validated['user_id'])
+            ->findOrFail($validated['contact_id']);
+
+        $contact->delete();
+
+        return response()->json([
+            'message' => 'Contact deleted successfully.',
+        ]);
+    }
+
+    public function bulkDestroy(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'user_id' => ['required', 'integer', 'exists:users,id'],
+            'contact_ids' => ['required', 'array', 'min:1'],
+            'contact_ids.*' => ['integer', 'exists:contacts,id'],
+        ]);
+
+        $deletedCount = Contact::query()
+            ->where('user_id', $validated['user_id'])
+            ->whereIn('id', $validated['contact_ids'])
+            ->delete();
+
+        return response()->json([
+            'message' => 'Contacts deleted successfully.',
+            'deleted_count' => $deletedCount,
+        ]);
+    }
+
+    public function lookup(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'phone_number' => ['required', 'string', 'max:50'],
+        ]);
+
+        $validated['phone_number'] = preg_replace('/\D+/', '', trim($validated['phone_number'])) ?? '';
+
+        if ($validated['phone_number'] === '') {
+            return response()->json([
+                'message' => 'Phone number is required.',
+                'errors' => [
+                    'phone_number' => ['Phone number is required.'],
+                ],
+            ], 422);
+        }
+
+        $linkedDevice = $this->findDeviceByPhoneNumber($validated['phone_number']);
+        $user = $linkedDevice
+            ? User::find($linkedDevice->user_id)
+            : User::query()
+            ->where('phone_number', $validated['phone_number'])
+            ->first();
+
+        return response()->json([
+            'user' => $user ? [
+                'id' => (string) $user->id,
+                'name' => $user->name,
+                'phone_number' => $user->phone_number,
+            ] : null,
+            'device' => $linkedDevice ? $this->mapDevice($linkedDevice) : null,
+        ]);
+    }
+
+    private function mapContact(Contact $contact): array
+    {
+        $linkedDevice = $this->findDeviceByPhoneNumber($contact->phone_number);
+
+        return [
+            'id' => (string) $contact->id,
+            'name' => $contact->name,
+            'phone_number' => $contact->phone_number,
+            'linked_user' => $contact->contactUser ? [
+                'id' => (string) $contact->contactUser->id,
+                'name' => $contact->contactUser->name,
+                'phone_number' => $contact->contactUser->phone_number,
+            ] : null,
+            'linked_device' => $linkedDevice ? $this->mapDevice($linkedDevice) : null,
+        ];
+    }
+
+    private function findDeviceByPhoneNumber(string $phoneNumber): ?object
+    {
+        if (! Schema::hasTable('devices')) {
+            return null;
+        }
+
+        $digits = preg_replace('/\D+/', '', $phoneNumber) ?? '';
+
+        if ($digits === '') {
+            return null;
+        }
+
+        return DB::table('devices')
+            ->where('phone_number', $phoneNumber)
+            ->orWhere('phone_number', $digits)
+            ->first();
+    }
+
+    private function mapDevice(object $device): array
+    {
+        return [
+            'user_id' => (string) $device->user_id,
+            'device_id' => $device->device_id,
+            'name' => $device->name,
+            'os' => $device->os,
+            'phone_number' => $device->phone_number,
+            'storage' => (int) ($device->storage ?? 500),
+        ];
+    }
+}

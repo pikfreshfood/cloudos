@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "7f9fd869-09fb-4667-b991-e1291a4fc09d"
+      }
+    },
+    "android": {
+      "package": "com.anosupermax.api_endpoint"
+    }
+  }
+}
