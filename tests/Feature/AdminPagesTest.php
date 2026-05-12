@@ -149,6 +149,7 @@ class AdminPagesTest extends TestCase
         foreach ([
             '/admin/dashboard' => 'Recent App Submissions',
             '/admin/users' => 'Registered Users',
+            route('admin.users.edit', User::first()) => 'Edit / Update User',
             '/admin/developers' => 'Developer Accounts',
             '/admin/apps' => 'App Review Queue',
             '/admin/support' => 'Support Messages',

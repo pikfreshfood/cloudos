@@ -138,6 +138,18 @@ class AdminController extends Controller
         ]);
     }
 
+    public function editUser(Request $request, User $user): View|RedirectResponse
+    {
+        if (! $this->isLoggedIn($request)) {
+            return redirect()->route('admin.login');
+        }
+
+        return view('admin.edit-user', [
+            'stats' => $this->stats(),
+            'user' => $user,
+        ]);
+    }
+
     public function updateUser(Request $request, User $user): RedirectResponse
     {
         if (! $this->isLoggedIn($request)) {
