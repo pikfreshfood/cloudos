@@ -29,6 +29,8 @@ run_migration.php
 server_upload_package
 cloudos_server_update.zip
 server_files_to_upload.txt
+setup-android-sdk.ps1
+setup_col.ps1
 
 # Large files
 *.apk
