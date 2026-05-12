@@ -22,3 +22,14 @@
 Homestead.json
 Homestead.yaml
 Thumbs.db
+
+# React Native - completely ignored
+cloud_mobile/
+
+# Setup files
+setup-android-sdk.ps1
+setup_col.ps1
+
+# Large files
+*.apk
+*.zip
