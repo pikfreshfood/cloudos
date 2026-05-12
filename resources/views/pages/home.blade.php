@@ -84,10 +84,6 @@
         <div>
             <p class="section-kicker">Download</p>
             <h2 class="section-heading">Install Cloud OS and start from your cloud-powered device menu.</h2>
-            <p class="section-copy">
-                Place the Android build at <strong>public/downloads/cloud-os.apk</strong>, and the button will serve it automatically.
-                The old <strong>cloud-mobile.apk</strong> name is still supported as a fallback.
-            </p>
             <div class="hero-actions">
                 <a class="button button-primary" href="{{ route('download.android') }}">Download Android APK</a>
                 <a class="button button-light" href="{{ route('auth.entry') }}">Create account</a>
