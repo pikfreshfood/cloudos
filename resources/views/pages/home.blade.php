@@ -112,14 +112,5 @@
     </div>
 </section>
 
-<section id="app-store">
-    <div class="section-inner">
-        <p class="section-kicker">App Store flow</p>
-        <h2 class="section-heading">Developers upload. Cloud OS displays. Users share, download, and open apps from the menu.</h2>
-        <p class="section-copy">
-            This public website supports the Cloud OS app store flow: developer accounts, package uploads,
-            review status, store listings, install records, and device-to-device app sharing.
-        </p>
-    </div>
-</section>
+
 @endsection
