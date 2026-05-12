@@ -23,6 +23,10 @@ Homestead.json
 Homestead.yaml
 Thumbs.db
 
+# Database files
+/database/*.sqlite
+/database/*.sqlite-journal
+
 # React Native - completely ignored
 cloud_mobile/
 
