@@ -162,4 +162,72 @@ class AdminPagesTest extends TestCase
             ])->get($path)->assertOk()->assertSee($text);
         }
     }
+
+    public function test_admin_can_update_user_account(): void
+    {
+        $admin = AdminAccount::create([
+            'name' => 'Cloud OS Admin',
+            'email' => 'admin@cloudos.app',
+            'password' => Hash::make('admin123'),
+            'role' => 'super_admin',
+            'status' => 'active',
+        ]);
+
+        $user = User::create([
+            'name' => 'Mobile User',
+            'username' => 'mobileuser',
+            'email' => 'mobile@example.com',
+            'phone_number' => '07061082286',
+            'password' => Hash::make('old-password'),
+        ]);
+
+        $this->withSession([
+            'admin_logged_in' => true,
+            'admin_id' => $admin->id,
+            'admin_role' => 'super_admin',
+        ])->post(route('admin.users.update', $user), [
+            'name' => 'Updated User',
+            'email' => 'updated@example.com',
+            'phone_number' => '08012345678',
+            'password' => 'new-password',
+            'password_confirmation' => 'new-password',
+        ])->assertRedirect(route('admin.users'));
+
+        $user->refresh();
+
+        $this->assertSame('Updated User', $user->name);
+        $this->assertSame('updated@example.com', $user->email);
+        $this->assertSame('08012345678', $user->phone_number);
+        $this->assertTrue(Hash::check('new-password', $user->password));
+    }
+
+    public function test_admin_can_delete_user_account(): void
+    {
+        $admin = AdminAccount::create([
+            'name' => 'Cloud OS Admin',
+            'email' => 'admin@cloudos.app',
+            'password' => Hash::make('admin123'),
+            'role' => 'super_admin',
+            'status' => 'active',
+        ]);
+
+        $user = User::create([
+            'name' => 'Mobile User',
+            'username' => 'mobileuser',
+            'email' => 'mobile@example.com',
+            'phone_number' => '07061082286',
+            'password' => Hash::make('password'),
+        ]);
+
+        $this->withSession([
+            'admin_logged_in' => true,
+            'admin_id' => $admin->id,
+            'admin_role' => 'super_admin',
+        ])->delete(route('admin.users.delete', $user))
+            ->assertRedirect(route('admin.users'));
+
+        $this->assertDatabaseMissing('users', [
+            'id' => $user->id,
+        ]);
+    }
 }

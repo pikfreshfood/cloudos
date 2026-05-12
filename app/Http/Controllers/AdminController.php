@@ -11,6 +11,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
@@ -135,6 +136,47 @@ class AdminController extends Controller
             'stats' => $this->stats(),
             'users' => User::latest()->get(),
         ]);
+    }
+
+    public function updateUser(Request $request, User $user): RedirectResponse
+    {
+        if (! $this->isLoggedIn($request)) {
+            return redirect()->route('admin.login');
+        }
+
+        $validated = $request->validate([
+            'name' => ['required', 'string', 'max:255'],
+            'email' => ['required', 'email', 'max:255', Rule::unique('users', 'email')->ignore($user->id)],
+            'phone_number' => ['nullable', 'regex:/^\d{3,20}$/', Rule::unique('users', 'phone_number')->ignore($user->id)],
+            'password' => ['nullable', 'string', 'min:6', 'confirmed'],
+        ]);
+
+        $updates = [
+            'name' => trim($validated['name']),
+            'email' => strtolower(trim($validated['email'])),
+            'phone_number' => $this->normalizePhoneNumber($validated['phone_number'] ?? ''),
+        ];
+
+        if (! empty($validated['password'])) {
+            $updates['password'] = Hash::make(trim($validated['password']));
+        }
+
+        $user->update($updates);
+
+        return redirect()->route('admin.users')
+            ->with('status', 'User account updated.');
+    }
+
+    public function deleteUser(Request $request, User $user): RedirectResponse
+    {
+        if (! $this->isLoggedIn($request)) {
+            return redirect()->route('admin.login');
+        }
+
+        $user->delete();
+
+        return redirect()->route('admin.users')
+            ->with('status', 'User account deleted.');
     }
 
     public function developers(Request $request): View|RedirectResponse
@@ -432,5 +474,12 @@ class AdminController extends Controller
             'support_admin' => 'Support Admin',
             'viewer' => 'Viewer',
         ];
+    }
+
+    private function normalizePhoneNumber(?string $phoneNumber): ?string
+    {
+        $normalized = preg_replace('/\D+/', '', trim((string) $phoneNumber)) ?? '';
+
+        return $normalized === '' ? null : $normalized;
     }
 }

@@ -88,6 +88,8 @@ Route::get('/admin/admins', [AdminController::class, 'admins'])->name('admin.adm
 Route::post('/admin/admins', [AdminController::class, 'storeAdmin'])->name('admin.admins.store');
 Route::post('/admin/admins/{admin}', [AdminController::class, 'updateAdmin'])->name('admin.admins.update');
 Route::get('/admin/users', [AdminController::class, 'users'])->name('admin.users');
+Route::post('/admin/users/{user}', [AdminController::class, 'updateUser'])->name('admin.users.update');
+Route::delete('/admin/users/{user}', [AdminController::class, 'deleteUser'])->name('admin.users.delete');
 Route::get('/admin/developers', [AdminController::class, 'developers'])->name('admin.developers');
 Route::get('/admin/apps', [AdminController::class, 'apps'])->name('admin.apps');
 Route::post('/admin/apps/{app}/status', [AdminController::class, 'updateAppStatus'])->name('admin.apps.status');
