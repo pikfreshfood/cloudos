@@ -21,16 +21,8 @@ api_endpoint/*.swp
 api_endpoint/*.swo
 api_endpoint/*~
 
-# React Native
-cloud_mobile/node_modules
-cloud_mobile/.expo
-cloud_mobile/dist
-cloud_mobile/web-build
-cloud_mobile/.env
-cloud_mobile/.env.local
-cloud_mobile/.env.*.local
-cloud_mobile/.DS_Store
-cloud_mobile/coverage
+# React Native - completely ignored
+cloud_mobile/
 
 # Temporary files
 run_migration.php
