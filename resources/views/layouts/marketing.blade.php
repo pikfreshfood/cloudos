@@ -571,11 +571,31 @@
                         <h3>Cloud OS</h3>
                         <p>Cloud-powered mobile workspace, app store, file sharing, and device-number communication platform.</p>
                         <div class="social-links" aria-label="Social media links">
-                            <a href="https://facebook.com" rel="noopener" target="_blank" aria-label="Facebook">F</a>
-                            <a href="https://x.com" rel="noopener" target="_blank" aria-label="X">X</a>
-                            <a href="https://instagram.com" rel="noopener" target="_blank" aria-label="Instagram">IG</a>
-                            <a href="https://linkedin.com" rel="noopener" target="_blank" aria-label="LinkedIn">IN</a>
-                            <a href="https://youtube.com" rel="noopener" target="_blank" aria-label="YouTube">YT</a>
+                            <a href="https://facebook.com" rel="noopener" target="_blank" aria-label="Facebook">
+                                <svg viewBox="0 0 24 24" aria-hidden="true">
+                                    <path d="M22 12.06C22 6.5 17.52 2 12 2S2 6.5 2 12.06c0 5.02 3.66 9.18 8.44 9.94v-7.03H7.9v-2.91h2.54V9.85c0-2.52 1.49-3.91 3.77-3.91 1.09 0 2.23.2 2.23.2v2.47h-1.26c-1.24 0-1.63.78-1.63 1.57v1.88h2.77l-.44 2.91h-2.33V22C18.34 21.24 22 17.08 22 12.06Z"/>
+                                </svg>
+                            </a>
+                            <a href="https://x.com" rel="noopener" target="_blank" aria-label="X">
+                                <svg viewBox="0 0 24 24" aria-hidden="true">
+                                    <path d="M18.24 2.25h3.31l-7.23 8.26 8.5 11.24h-6.66l-5.22-6.82-5.97 6.82H1.66l7.73-8.84L1.24 2.25h6.83l4.71 6.23 5.46-6.23Zm-1.16 17.52h1.83L7.08 4.13H5.12l11.96 15.64Z"/>
+                                </svg>
+                            </a>
+                            <a href="https://instagram.com" rel="noopener" target="_blank" aria-label="Instagram">
+                                <svg viewBox="0 0 24 24" aria-hidden="true">
+                                    <path d="M7.8 2h8.4A5.81 5.81 0 0 1 22 7.8v8.4a5.81 5.81 0 0 1-5.8 5.8H7.8A5.81 5.81 0 0 1 2 16.2V7.8A5.81 5.81 0 0 1 7.8 2Zm8.4 2H7.8A3.8 3.8 0 0 0 4 7.8v8.4A3.8 3.8 0 0 0 7.8 20h8.4a3.8 3.8 0 0 0 3.8-3.8V7.8A3.8 3.8 0 0 0 16.2 4ZM12 7.25A4.75 4.75 0 1 1 7.25 12 4.75 4.75 0 0 1 12 7.25Zm0 2A2.75 2.75 0 1 0 14.75 12 2.75 2.75 0 0 0 12 9.25Zm5.05-2.75a1.1 1.1 0 1 1-1.1 1.1 1.1 1.1 0 0 1 1.1-1.1Z"/>
+                                </svg>
+                            </a>
+                            <a href="https://linkedin.com" rel="noopener" target="_blank" aria-label="LinkedIn">
+                                <svg viewBox="0 0 24 24" aria-hidden="true">
+                                    <path d="M20.45 20.45h-3.56v-5.57c0-1.33-.02-3.04-1.85-3.04-1.85 0-2.14 1.45-2.14 2.94v5.67H9.34V9h3.41v1.56h.05a3.74 3.74 0 0 1 3.37-1.85c3.61 0 4.28 2.38 4.28 5.47v6.27ZM5.32 7.43a2.06 2.06 0 1 1 0-4.12 2.06 2.06 0 0 1 0 4.12Zm1.78 13.02H3.54V9H7.1v11.45ZM22.22 0H1.77C.79 0 0 .77 0 1.72v20.56C0 23.23.79 24 1.77 24h20.45c.98 0 1.78-.77 1.78-1.72V1.72C24 .77 23.2 0 22.22 0Z"/>
+                                </svg>
+                            </a>
+                            <a href="https://youtube.com" rel="noopener" target="_blank" aria-label="YouTube">
+                                <svg viewBox="0 0 24 24" aria-hidden="true">
+                                    <path d="M23.5 6.19a3.01 3.01 0 0 0-2.12-2.13C19.5 3.56 12 3.56 12 3.56s-7.5 0-9.38.5A3.01 3.01 0 0 0 .5 6.19 31.35 31.35 0 0 0 0 12a31.35 31.35 0 0 0 .5 5.81 3.01 3.01 0 0 0 2.12 2.13c1.88.5 9.38.5 9.38.5s7.5 0 9.38-.5a3.01 3.01 0 0 0 2.12-2.13A31.35 31.35 0 0 0 24 12a31.35 31.35 0 0 0-.5-5.81ZM9.55 15.57V8.43L15.82 12l-6.27 3.57Z"/>
+                                </svg>
+                            </a>
                         </div>
                     </div>
                     @if ($developerLoggedIn)
