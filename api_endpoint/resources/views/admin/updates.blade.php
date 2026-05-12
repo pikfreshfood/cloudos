@@ -22,6 +22,10 @@
                 <label for="message">Update Message</label>
                 <textarea id="message" name="message" required placeholder="Describe what's new in this update..." rows="5"></textarea>
             </div>
+            <div class="field full">
+                <label for="link">Link (Optional)</label>
+                <input id="link" name="link" type="url" placeholder="e.g., https://cloudos.ng/download">
+            </div>
             <div class="field" style="align-self:end;">
                 <button class="btn btn-primary" type="submit">Push Update</button>
             </div>
@@ -32,15 +36,21 @@
         <h2>Update History</h2>
         <table>
             <thead>
-                <tr><th>Version</th><th>Title</th><th>Message</th><th>Status</th><th>Seen By</th><th>Date</th><th>Actions</th></tr>
+                <tr><th>Title</th><th>Message</th><th>Link</th><th>Status</th><th>Seen By</th><th>Date</th><th>Actions</th></tr>
             </thead>
             <tbody>
                 @forelse ($updates as $update)
                     <tr>
-                        <td><strong>v{{ $update->version_code }}</strong></td>
                         <td>{{ $update->title }}</td>
-                        <td style="max-width: 300px;">
-                            <span class="muted">{{ Str::limit($update->message, 100) }}</span>
+                        <td style="max-width: 250px;">
+                            <span class="muted">{{ Str::limit($update->message, 80) }}</span>
+                        </td>
+                        <td style="max-width: 200px;">
+                            @if ($update->link)
+                                <a href="{{ $update->link }}" target="_blank" class="muted" style="font-size: 12px; word-break: break-all;">{{ Str::limit($update->link, 30) }}</a>
+                            @else
+                                <span class="muted" style="font-size: 12px;">—</span>
+                            @endif
                         </td>
                         <td><span class="status status-{{ $update->status }}">{{ ucfirst($update->status) }}</span></td>
                         <td>{{ $update->seen_by_users_count }} users</td>

@@ -244,6 +244,7 @@ class AdminController extends Controller
         $validated = $request->validate([
             'title' => ['required', 'string', 'max:255'],
             'message' => ['required', 'string'],
+            'link' => ['nullable', 'url', 'max:500'],
         ]);
 
         try {
@@ -254,6 +255,7 @@ class AdminController extends Controller
                 \App\Models\AppUpdate::create([
                     'title' => $validated['title'],
                     'message' => $validated['message'],
+                    'link' => $validated['link'] ?? null,
                     'status' => 'active',
                     'version_code' => $nextVersion,
                 ]);
