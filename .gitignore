@@ -13,9 +13,17 @@
 /.zed
 /auth.json
 /node_modules
+
+# Public runtime/generated files
 /public/build
+/public/cloud-storage/*
+!/public/cloud-storage/.gitignore
+/public/downloads/*
+!/public/downloads/.gitkeep
 /public/hot
 /public/storage
+
+# Storage runtime files
 /storage/*.key
 /storage/pail
 /vendor
