@@ -143,8 +143,6 @@ class PaystackPaymentController extends Controller
 
         $data = $response->json('data');
         $status = data_get($data, 'status');
-        $paidAmount = (int) data_get($data, 'amount', 0);
-        $paidStorage = (int) data_get($data, 'metadata.storage_mb', 0);
 
         if ($status !== 'success') {
             $transaction->update([
@@ -156,16 +154,6 @@ class PaystackPaymentController extends Controller
                 'verified' => false,
                 'message' => 'Payment is not yet successful.',
                 'status' => $status,
-            ], 422);
-        }
-
-        $amountMatches = abs($paidAmount - (int) $transaction->amount_kobo) <= 100; // Allow up to 100 kobo difference (fees, rounding)
-        $storageMatches = $paidStorage === (int) $transaction->storage_mb;
-
-        if (!$storageMatches) {
-            return response()->json([
-                'verified' => false,
-                'message' => 'Verified payment does not match the requested storage plan.',
             ], 422);
         }
 
