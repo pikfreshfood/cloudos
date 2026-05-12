@@ -388,7 +388,14 @@ class AdminController extends Controller
             // Table doesn't exist yet
         }
 
-        $totalPaidKobo = \App\Models\PaystackTransaction::where('status', 'success')->sum('amount_kobo');
+        $totalPaidKobo = 0;
+        try {
+            if (Schema::hasTable('paystack_transactions')) {
+                $totalPaidKobo = \App\Models\PaystackTransaction::where('status', 'success')->sum('amount_kobo');
+            }
+        } catch (\Exception $e) {
+            // Table doesn't exist yet
+        }
         $totalPaidNgn = (int) ($totalPaidKobo / 100);
 
         return [

@@ -738,16 +738,14 @@ class FileUploadController extends Controller
     private function ensureLocalStoragePath(string $relativePath): void
     {
         $cleanPath = $this->sanitizeFolderPath($relativePath);
-        $localRoot = config('filesystems.disks.local.root', public_path('cloud-storage'));
+        $disk = Storage::disk('local');
 
-        foreach ([
-            $localRoot,
-            "{$localRoot}/uploads",
-            $cleanPath ? "{$localRoot}/{$cleanPath}" : $localRoot,
-        ] as $path) {
-            if (! is_dir($path)) {
-                @mkdir($path, 0775, true);
-            }
+        if (! $disk->exists('uploads')) {
+            $disk->makeDirectory('uploads');
+        }
+
+        if ($cleanPath !== '' && ! $disk->exists($cleanPath)) {
+            $disk->makeDirectory($cleanPath);
         }
     }
 
