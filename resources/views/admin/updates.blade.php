@@ -86,6 +86,26 @@
                 @endforelse
             </tbody>
         </table>
+
+        @if (is_object($updates) && method_exists($updates, 'hasPages') && $updates->hasPages())
+            <div style="margin-top: 24px; display: flex; justify-content: center; gap: 8px;">
+                @if ($updates->onFirstPage())
+                    <span class="btn" style="background: var(--line); color: var(--muted); cursor: not-allowed;">Previous</span>
+                @else
+                    <a href="{{ $updates->previousPageUrl() }}" class="btn" style="background: var(--line); color: var(--ink);">Previous</a>
+                @endif
+
+                <span class="muted" style="display: flex; align-items: center; padding: 0 16px;">
+                    Page {{ $updates->currentPage() }} of {{ $updates->lastPage() }}
+                </span>
+
+                @if ($updates->hasMorePages())
+                    <a href="{{ $updates->nextPageUrl() }}" class="btn btn-primary">Next</a>
+                @else
+                    <span class="btn" style="background: var(--line); color: var(--muted); cursor: not-allowed;">Next</span>
+                @endif
+            </div>
+        @endif
     </div>
 </div>
 @endsection

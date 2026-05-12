@@ -78,7 +78,7 @@ class AdminController extends Controller
         }
 
         return view('admin.admins', [
-            'admins' => AdminAccount::latest()->get(),
+            'admins' => AdminAccount::latest()->paginate(15),
             'roles' => $this->adminRoles(),
         ]);
     }
@@ -134,7 +134,7 @@ class AdminController extends Controller
 
         return view('admin.users', [
             'stats' => $this->stats(),
-            'users' => User::latest()->get(),
+            'users' => User::latest()->paginate(15),
         ]);
     }
 
@@ -199,7 +199,7 @@ class AdminController extends Controller
 
         return view('admin.developers', [
             'stats' => $this->stats(),
-            'developers' => DeveloperProfile::withCount('apps')->latest()->get(),
+            'developers' => DeveloperProfile::withCount('apps')->latest()->paginate(15),
         ]);
     }
 
@@ -211,7 +211,7 @@ class AdminController extends Controller
 
         return view('admin.apps', [
             'stats' => $this->stats(),
-            'apps' => DeveloperApp::with('developer')->latest()->get(),
+            'apps' => DeveloperApp::with('developer')->latest()->paginate(15),
         ]);
     }
 
@@ -223,7 +223,7 @@ class AdminController extends Controller
 
         return view('admin.support', [
             'stats' => $this->stats(),
-            'messages' => SupportMessage::latest()->get(),
+            'messages' => SupportMessage::latest()->paginate(15),
         ]);
     }
 
@@ -277,7 +277,7 @@ class AdminController extends Controller
         $updates = [];
         try {
             if (Schema::hasTable('app_updates')) {
-                $updates = \App\Models\AppUpdate::withCount('seenByUsers')->latest()->get();
+                $updates = \App\Models\AppUpdate::withCount('seenByUsers')->latest()->paginate(15);
             }
         } catch (\Exception $e) {
             // Table doesn't exist yet

@@ -14,7 +14,7 @@
 <div class="card">
     <div class="page-actions">
         <h2>Registered Users</h2>
-        <span class="muted">{{ $users->count() }} total</span>
+        <span class="muted">{{ $users->total() }} total</span>
     </div>
     <table class="users-table">
         <thead>
@@ -43,5 +43,25 @@
             @endforelse
         </tbody>
     </table>
+
+    @if ($users->hasPages())
+        <div style="margin-top: 24px; display: flex; justify-content: center; gap: 8px;">
+            @if ($users->onFirstPage())
+                <span class="btn" style="background: var(--line); color: var(--muted); cursor: not-allowed;">Previous</span>
+            @else
+                <a href="{{ $users->previousPageUrl() }}" class="btn" style="background: var(--line); color: var(--ink);">Previous</a>
+            @endif
+
+            <span class="muted" style="display: flex; align-items: center; padding: 0 16px;">
+                Page {{ $users->currentPage() }} of {{ $users->lastPage() }}
+            </span>
+
+            @if ($users->hasMorePages())
+                <a href="{{ $users->nextPageUrl() }}" class="btn btn-primary">Next</a>
+            @else
+                <span class="btn" style="background: var(--line); color: var(--muted); cursor: not-allowed;">Next</span>
+            @endif
+        </div>
+    @endif
 </div>
 @endsection

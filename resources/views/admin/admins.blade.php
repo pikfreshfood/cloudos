@@ -74,6 +74,26 @@
                 @endforelse
             </tbody>
         </table>
+
+        @if ($admins->hasPages())
+            <div style="margin-top: 24px; display: flex; justify-content: center; gap: 8px;">
+                @if ($admins->onFirstPage())
+                    <span class="btn" style="background: var(--line); color: var(--muted); cursor: not-allowed;">Previous</span>
+                @else
+                    <a href="{{ $admins->previousPageUrl() }}" class="btn" style="background: var(--line); color: var(--ink);">Previous</a>
+                @endif
+
+                <span class="muted" style="display: flex; align-items: center; padding: 0 16px;">
+                    Page {{ $admins->currentPage() }} of {{ $admins->lastPage() }}
+                </span>
+
+                @if ($admins->hasMorePages())
+                    <a href="{{ $admins->nextPageUrl() }}" class="btn btn-primary">Next</a>
+                @else
+                    <span class="btn" style="background: var(--line); color: var(--muted); cursor: not-allowed;">Next</span>
+                @endif
+            </div>
+        @endif
     </div>
 </div>
 @endsection

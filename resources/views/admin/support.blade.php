@@ -38,5 +38,25 @@
             @endforelse
         </tbody>
     </table>
+
+    @if ($messages->hasPages())
+        <div style="margin-top: 24px; display: flex; justify-content: center; gap: 8px;">
+            @if ($messages->onFirstPage())
+                <span class="btn" style="background: var(--line); color: var(--muted); cursor: not-allowed;">Previous</span>
+            @else
+                <a href="{{ $messages->previousPageUrl() }}" class="btn" style="background: var(--line); color: var(--ink);">Previous</a>
+            @endif
+
+            <span class="muted" style="display: flex; align-items: center; padding: 0 16px;">
+                Page {{ $messages->currentPage() }} of {{ $messages->lastPage() }}
+            </span>
+
+            @if ($messages->hasMorePages())
+                <a href="{{ $messages->nextPageUrl() }}" class="btn btn-primary">Next</a>
+            @else
+                <span class="btn" style="background: var(--line); color: var(--muted); cursor: not-allowed;">Next</span>
+            @endif
+        </div>
+    @endif
 </div>
 @endsection

@@ -7,7 +7,7 @@
 <div class="card">
     <div class="page-actions">
         <h2>App Review Queue</h2>
-        <span class="muted">{{ $apps->count() }} apps</span>
+        <span class="muted">{{ $apps->total() }} apps</span>
     </div>
     <table>
         <thead>
