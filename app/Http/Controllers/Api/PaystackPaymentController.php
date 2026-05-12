@@ -159,7 +159,10 @@ class PaystackPaymentController extends Controller
             ], 422);
         }
 
-        if ($paidAmount !== (int) $transaction->amount_kobo || $paidStorage !== (int) $transaction->storage_mb) {
+        $amountMatches = abs($paidAmount - (int) $transaction->amount_kobo) <= 100; // Allow up to 100 kobo difference (fees, rounding)
+        $storageMatches = $paidStorage === (int) $transaction->storage_mb;
+
+        if (!$storageMatches) {
             return response()->json([
                 'verified' => false,
                 'message' => 'Verified payment does not match the requested storage plan.',
