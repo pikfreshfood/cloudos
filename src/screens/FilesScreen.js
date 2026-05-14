@@ -13,6 +13,14 @@ import { ensureDeviceHasSpace, getDeviceStorageLimitBytes, getDeviceStorageSnaps
 import { resolveLocalRecipientDevice } from '../utils/recipientDevice';
 import { API_URL, fileService, messageService } from '../services/api';
 import { installApk } from '../native/apkInstaller';
+import {
+  OfflineSyncStorageFullError,
+  addOfflineSyncFolder,
+  getDeviceSyncFolders,
+  registerOfflineSyncTaskAsync,
+  removeOfflineSyncFolder,
+  runOfflineFolderSync,
+} from '../utils/offlineFolderSync';
 
 export default function FilesScreen({ navigation }) {
   const { getStorageDir, osType, currentDevice } = useOS();
@@ -22,6 +30,13 @@ export default function FilesScreen({ navigation }) {
   const [files, setFiles] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [activeFileTab, setActiveFileTab] = useState('cloud');
+  const [syncFolders, setSyncFolders] = useState([]);
+  const [syncBrowserPath, setSyncBrowserPath] = useState(getStorageDir() || '');
+  const [syncBrowserHistory, setSyncBrowserHistory] = useState([]);
+  const [syncBrowserFolders, setSyncBrowserFolders] = useState([]);
+  const [isSyncBrowserLoading, setIsSyncBrowserLoading] = useState(false);
+  const [isOfflineSyncing, setIsOfflineSyncing] = useState(false);
+  const [syncProgressText, setSyncProgressText] = useState('');
 
   // Multi-select state
   const [isSelectionMode, setIsSelectionMode] = useState(false);
@@ -95,9 +110,19 @@ export default function FilesScreen({ navigation }) {
     const baseDir = getStorageDir() || '';
     setCurrentPath(baseDir);
     setPickerPath(baseDir);
+    setSyncBrowserPath(baseDir);
     setHistory([]);
     setPickerHistory([]);
+    setSyncBrowserHistory([]);
   }, [currentDevice?.id]);
+
+  useEffect(() => {
+    if (activeFileTab !== 'sync') return;
+
+    refreshOfflineSyncFolders();
+    loadSyncBrowserFolders(syncBrowserPath || getStorageDir() || '');
+    registerOfflineSyncTaskAsync();
+  }, [activeFileTab, syncBrowserPath, currentUser?.id, currentDevice?.id]);
 
   const loadFilesFromLocal = async (path) => {
     if (!path) {
@@ -277,6 +302,148 @@ export default function FilesScreen({ navigation }) {
       setPickerFolders(folderList);
     } catch (error) {
       console.error(error);
+    }
+  };
+
+  const loadSyncBrowserFolders = async (path) => {
+    const baseDir = getStorageDir() || '';
+    const nextPath = path || baseDir;
+
+    if (!nextPath) {
+      setSyncBrowserFolders([]);
+      return;
+    }
+
+    try {
+      setIsSyncBrowserLoading(true);
+      const items = await FileSystem.readDirectoryAsync(nextPath);
+      const folders = [];
+
+      for (const item of items.filter((name) => !name.startsWith('.'))) {
+        const itemPath = `${nextPath.endsWith('/') ? nextPath : `${nextPath}/`}${item}`;
+        const info = await FileSystem.getInfoAsync(itemPath);
+
+        if (info.exists && info.isDirectory) {
+          folders.push({
+            id: `${itemPath}/`,
+            name: item,
+            path: `${itemPath}/`,
+          });
+        }
+      }
+
+      folders.sort((a, b) => a.name.localeCompare(b.name));
+      setSyncBrowserFolders(folders);
+    } catch (error) {
+      console.log('Failed to browse sync folders:', error?.message || error);
+      setSyncBrowserFolders([]);
+    } finally {
+      setIsSyncBrowserLoading(false);
+    }
+  };
+
+  const refreshOfflineSyncFolders = async () => {
+    if (!currentUser?.id || !currentDevice?.id) {
+      setSyncFolders([]);
+      return;
+    }
+
+    const folders = await getDeviceSyncFolders({
+      userId: currentUser.id,
+      deviceId: currentDevice.id,
+    });
+    setSyncFolders(folders);
+  };
+
+  const isSyncFolderMarked = (folderPath) => (
+    syncFolders.some((folder) => folder.path === folderPath)
+  );
+
+  const handleBrowseSyncFolder = (folderPath) => {
+    setSyncBrowserHistory((current) => [...current, syncBrowserPath || getStorageDir() || '']);
+    setSyncBrowserPath(folderPath);
+  };
+
+  const handleSyncBrowserBack = () => {
+    if (syncBrowserHistory.length === 0) return;
+
+    const nextHistory = [...syncBrowserHistory];
+    const previousPath = nextHistory.pop();
+    setSyncBrowserHistory(nextHistory);
+    setSyncBrowserPath(previousPath || getStorageDir() || '');
+  };
+
+  const handleToggleSyncFolder = async (folder) => {
+    if (!hasApiContext) {
+      Alert.alert('Cloud account required', 'Sign in with a Cloud OS account and select a cloud device before enabling offline sync.');
+      return;
+    }
+
+    const markedFolder = syncFolders.find((item) => item.path === folder.path);
+
+    if (markedFolder) {
+      await removeOfflineSyncFolder(markedFolder.id);
+      await refreshOfflineSyncFolders();
+      return;
+    }
+
+    const addedFolder = await addOfflineSyncFolder({
+      folderPath: folder.path,
+      baseDir: getStorageDir() || '',
+      userId: currentUser.id,
+      deviceId: currentDevice.id,
+      storageMb: currentDevice.storage || 500,
+    });
+
+    await refreshOfflineSyncFolders();
+    await handleRunOfflineSync([addedFolder.id]);
+  };
+
+  const handleStorageFullAlert = () => {
+    Alert.alert(
+      'Cloud storage full',
+      'Sync stopped because this device cloud storage is full. Upgrade storage to continue syncing.',
+      [
+        { text: 'Later', style: 'cancel' },
+        { text: 'Upgrade Storage', onPress: () => navigation.navigate('SettingsScreen') },
+      ]
+    );
+  };
+
+  const handleRunOfflineSync = async (folderIds = null) => {
+    if (!hasApiContext) {
+      Alert.alert('Cloud account required', 'Sign in with a Cloud OS account and select a cloud device before syncing offline folders.');
+      return;
+    }
+
+    try {
+      setIsOfflineSyncing(true);
+      setSyncProgressText('Preparing offline sync...');
+      await registerOfflineSyncTaskAsync();
+      const result = await runOfflineFolderSync({
+        folderIds,
+        onProgress: ({ file }) => {
+          setSyncProgressText(`Syncing ${file.name}`);
+        },
+      });
+
+      await refreshOfflineSyncFolders();
+      await loadFiles(currentPath);
+      setSyncProgressText(result.uploadedFiles > 0
+        ? `${result.uploadedFiles} file(s) synced.`
+        : 'Everything is up to date.');
+    } catch (error) {
+      await refreshOfflineSyncFolders();
+
+      if (error instanceof OfflineSyncStorageFullError || error?.code === 'STORAGE_FULL') {
+        setSyncProgressText('Sync paused: cloud storage full.');
+        handleStorageFullAlert();
+      } else {
+        setSyncProgressText(error?.message || 'Sync failed.');
+        Alert.alert('Sync failed', error?.message || 'Could not sync offline folders right now.');
+      }
+    } finally {
+      setIsOfflineSyncing(false);
     }
   };
 
@@ -1010,17 +1177,91 @@ export default function FilesScreen({ navigation }) {
             )}
           </>
         ) : (
-          <View style={styles.syncOfflinePanel}>
-            <View style={styles.syncOfflineIcon}>
-              <Ionicons name="cloud-done-outline" size={34} color="#2563eb" />
+          <>
+            <View style={styles.syncToolbar}>
+              <View style={styles.syncToolbarText}>
+                <Text style={styles.syncOfflineTitle}>Sync Offline</Text>
+                <Text style={styles.syncPathText} numberOfLines={1} ellipsizeMode="middle">
+                  {(syncBrowserPath || '').replace(getStorageDir() || '', 'Device files/')}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={[styles.syncNowButton, isOfflineSyncing && styles.syncNowButtonDisabled]}
+                onPress={() => handleRunOfflineSync()}
+                disabled={isOfflineSyncing || syncFolders.length === 0}
+              >
+                {isOfflineSyncing ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <Ionicons name="cloud-upload-outline" size={18} color="#ffffff" />
+                )}
+                <Text style={styles.syncNowButtonText}>Sync now</Text>
+              </TouchableOpacity>
             </View>
-            <Text style={styles.syncOfflineTitle}>Sync Offline</Text>
-            <Text style={styles.syncOfflineText}>No offline sync items yet.</Text>
-            <TouchableOpacity style={styles.syncOfflineButton} onPress={() => switchFileTab('cloud')}>
-              <Ionicons name="folder-open-outline" size={18} color="#ffffff" />
-              <Text style={styles.syncOfflineButtonText}>Open Cloud Files</Text>
-            </TouchableOpacity>
-          </View>
+
+            <View style={styles.syncSummaryCard}>
+              <Ionicons name="sync-outline" size={20} color="#2563eb" />
+              <Text style={styles.syncSummaryText}>
+                {syncFolders.length} folder(s) marked for cloud sync
+              </Text>
+            </View>
+
+            {syncProgressText ? (
+              <Text style={styles.syncProgressText}>{syncProgressText}</Text>
+            ) : null}
+
+            {syncBrowserHistory.length > 0 ? (
+              <TouchableOpacity style={styles.syncFolderRow} onPress={handleSyncBrowserBack}>
+                <Ionicons name="arrow-up-circle-outline" size={24} color="#2563eb" />
+                <Text style={styles.syncFolderName}>Back to parent folder</Text>
+              </TouchableOpacity>
+            ) : null}
+
+            {isSyncBrowserLoading ? (
+              <ActivityIndicator size="large" color="#3b82f6" style={{ marginTop: 20 }} />
+            ) : (
+              <FlatList
+                data={syncBrowserFolders}
+                keyExtractor={item => item.id}
+                contentContainerStyle={styles.listContainer}
+                ListEmptyComponent={<Text style={styles.emptyText}>No folders found</Text>}
+                renderItem={({ item }) => {
+                  const isMarked = isSyncFolderMarked(item.path);
+                  const markedFolder = syncFolders.find((folder) => folder.path === item.path);
+
+                  return (
+                    <View style={[styles.syncFolderRow, isMarked && styles.syncFolderRowMarked]}>
+                      <TouchableOpacity
+                        style={styles.syncFolderBrowse}
+                        onPress={() => handleBrowseSyncFolder(item.path)}
+                      >
+                        <Ionicons name="folder" size={26} color="#f59e0b" />
+                        <View style={styles.syncFolderInfo}>
+                          <Text style={styles.syncFolderName}>{item.name}</Text>
+                          <Text style={styles.syncFolderMeta}>
+                            {isMarked ? `Marked - ${markedFolder?.status || 'queued'}` : 'Tap folder name to browse'}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.syncMarkButton, isMarked && styles.syncMarkButtonActive]}
+                        onPress={() => handleToggleSyncFolder(item)}
+                      >
+                        <Ionicons
+                          name={isMarked ? 'checkmark-circle' : 'ellipse-outline'}
+                          size={22}
+                          color={isMarked ? '#ffffff' : '#2563eb'}
+                        />
+                        <Text style={[styles.syncMarkButtonText, isMarked && styles.syncMarkButtonTextActive]}>
+                          {isMarked ? 'Marked' : 'Mark'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  );
+                }}
+              />
+            )}
+          </>
         )}
       </View>
 
@@ -1425,38 +1666,27 @@ const styles = StyleSheet.create({
     marginTop: 40,
     fontSize: 16,
   },
-  syncOfflinePanel: {
+  syncToolbar: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#ffffff',
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    padding: 28,
-    marginTop: 4,
+    justifyContent: 'space-between',
+    gap: 12,
+    marginBottom: 12,
   },
-  syncOfflineIcon: {
-    width: 64,
-    height: 64,
-    borderRadius: 20,
-    backgroundColor: '#eff6ff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 16,
+  syncToolbarText: {
+    flex: 1,
   },
   syncOfflineTitle: {
     fontSize: 18,
     fontWeight: '800',
     color: '#0f172a',
-    marginBottom: 6,
   },
-  syncOfflineText: {
-    fontSize: 14,
+  syncPathText: {
+    fontSize: 12,
     color: '#64748b',
-    textAlign: 'center',
-    marginBottom: 18,
+    marginTop: 4,
   },
-  syncOfflineButton: {
+  syncNowButton: {
     minHeight: 44,
     borderRadius: 12,
     backgroundColor: '#2563eb',
@@ -1466,10 +1696,93 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingHorizontal: 16,
   },
-  syncOfflineButtonText: {
+  syncNowButtonDisabled: {
+    backgroundColor: '#94a3b8',
+  },
+  syncNowButtonText: {
     color: '#ffffff',
     fontSize: 14,
     fontWeight: '700',
+  },
+  syncSummaryCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#eff6ff',
+    borderColor: '#bfdbfe',
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 10,
+  },
+  syncSummaryText: {
+    color: '#1e3a8a',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  syncProgressText: {
+    color: '#64748b',
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 10,
+    paddingHorizontal: 4,
+  },
+  syncFolderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderColor: '#e2e8f0',
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: 12,
+    marginBottom: 10,
+    gap: 10,
+  },
+  syncFolderRowMarked: {
+    borderColor: '#2563eb',
+    backgroundColor: '#f8fbff',
+  },
+  syncFolderBrowse: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  syncFolderInfo: {
+    flex: 1,
+  },
+  syncFolderName: {
+    color: '#0f172a',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  syncFolderMeta: {
+    color: '#64748b',
+    fontSize: 12,
+    marginTop: 3,
+    textTransform: 'capitalize',
+  },
+  syncMarkButton: {
+    minHeight: 38,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+  },
+  syncMarkButtonActive: {
+    backgroundColor: '#2563eb',
+    borderColor: '#2563eb',
+  },
+  syncMarkButtonText: {
+    color: '#2563eb',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  syncMarkButtonTextActive: {
+    color: '#ffffff',
   },
   bottomNav: {
     height: 48,
