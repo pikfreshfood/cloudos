@@ -259,7 +259,7 @@ class AdminController extends Controller
             $query->whereDate('created_at', '<=', $request->date_to);
         }
 
-        $transactions = $query->latest()->paginate(20)->withQueryString();
+        $transactions = $query->latest()->paginate(15)->withQueryString();
 
         return view('admin.payments', [
             'stats' => $this->stats(),
