@@ -84,6 +84,16 @@ class FileUploadController extends Controller
         $basePath = trim("uploads/{$validated['user_id']}/{$validated['device_id']}/{$folderPath}", '/');
         $originalName = $file->getClientOriginalName();
         $filename = $this->uniqueFilename($basePath, $originalName);
+        $storageCheck = $this->canStoreIncomingBytes($validated['user_id'], $validated['device_id'], (int) $file->getSize());
+
+        if (! $storageCheck['ok']) {
+            return response()->json([
+                'message' => 'Cloud storage full. Upgrade storage to continue syncing files.',
+                'used_space' => $storageCheck['used_space'],
+                'storage_limit' => $storageCheck['storage_limit'],
+            ], 422);
+        }
+
         $this->ensureLocalStoragePath($basePath);
         $storedPath = $file->storeAs($basePath, $filename, 'local');
 
@@ -138,6 +148,15 @@ class FileUploadController extends Controller
         $filename = $this->uniqueFilename($basePath, $originalName);
         $storedPath = trim("{$basePath}/{$filename}", '/');
         $disk = Storage::disk('local');
+        $storageCheck = $this->canStoreIncomingBytes($validated['user_id'], $validated['device_id'], strlen($contents));
+
+        if (! $storageCheck['ok']) {
+            return response()->json([
+                'message' => 'Cloud storage full. Upgrade storage to continue syncing files.',
+                'used_space' => $storageCheck['used_space'],
+                'storage_limit' => $storageCheck['storage_limit'],
+            ], 422);
+        }
 
         $this->ensureLocalStoragePath($basePath);
         if (! $disk->put($storedPath, $contents)) {
@@ -679,6 +698,40 @@ class FileUploadController extends Controller
         }
 
         return $usedSpace;
+    }
+
+    private function getDeviceStorageLimitBytes(string $userId, string $deviceId): int
+    {
+        $storageMb = 500;
+
+        try {
+            if (Schema::hasTable('devices')) {
+                $device = DB::table('devices')
+                    ->where('user_id', $userId)
+                    ->where('device_id', $deviceId)
+                    ->first();
+
+                if ($device && $device->storage) {
+                    $storageMb = (int) $device->storage;
+                }
+            }
+        } catch (\Throwable) {
+            $storageMb = 500;
+        }
+
+        return $storageMb * 1024 * 1024;
+    }
+
+    private function canStoreIncomingBytes(string $userId, string $deviceId, int $incomingBytes): array
+    {
+        $usedSpace = $this->getDeviceUsedSpace($userId, $deviceId);
+        $storageLimit = $this->getDeviceStorageLimitBytes($userId, $deviceId);
+
+        return [
+            'ok' => ($usedSpace + $incomingBytes) <= $storageLimit,
+            'used_space' => $usedSpace,
+            'storage_limit' => $storageLimit,
+        ];
     }
 
     private function moveManagedItem($disk, string $sourcePath, string $destinationPath, string $type): void
