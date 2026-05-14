@@ -21,6 +21,7 @@ export default function FilesScreen({ navigation }) {
   const [history, setHistory] = useState([]);
   const [files, setFiles] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [activeFileTab, setActiveFileTab] = useState('cloud');
 
   // Multi-select state
   const [isSelectionMode, setIsSelectionMode] = useState(false);
@@ -300,6 +301,11 @@ export default function FilesScreen({ navigation }) {
   };
 
   const handleGoBack = () => {
+    if (activeFileTab === 'sync') {
+      setActiveFileTab('cloud');
+      return;
+    }
+
     if (history.length > 0) {
       const newHistory = [...history];
       const previousPath = newHistory.pop();
@@ -395,6 +401,10 @@ export default function FilesScreen({ navigation }) {
   };
 
   const handleAddPress = () => {
+    if (activeFileTab !== 'cloud') {
+      return;
+    }
+
     Alert.alert('Add New', 'Choose an action', [
       { text: 'Create Folder', onPress: () => {
           setInputType('createFolder');
@@ -826,6 +836,13 @@ export default function FilesScreen({ navigation }) {
     }
   };
 
+  const switchFileTab = (tab) => {
+    setActiveFileTab(tab);
+    setIsSelectionMode(false);
+    setSelectedFiles([]);
+    setActionModalVisible(false);
+  };
+
   const getIconForType = (type, name) => {
     if (type === 'folder') return 'folder';
     if (name.endsWith('.pdf')) return 'document-text';
@@ -903,9 +920,13 @@ export default function FilesScreen({ navigation }) {
           <Text style={styles.headerTitle} numberOfLines={1} ellipsizeMode="middle">
             {history.length === 0 ? 'Files' : (currentPath || '').split('/').slice(-2)[0] || 'Folder'}
           </Text>
-          <TouchableOpacity style={styles.addBtn} onPress={handleAddPress}>
-            <Ionicons name="add" size={28} color="#0f172a" />
-          </TouchableOpacity>
+          {activeFileTab === 'cloud' ? (
+            <TouchableOpacity style={styles.addBtn} onPress={handleAddPress}>
+              <Ionicons name="add" size={28} color="#0f172a" />
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.addBtnPlaceholder} />
+          )}
         </View>
       )}
 
@@ -938,23 +959,68 @@ export default function FilesScreen({ navigation }) {
           </LinearGradient>
         )}
 
-        <View style={styles.listHeader}>
-          <Text style={styles.listTitle}>{hasApiContext ? 'Cloud Files' : 'Files'}</Text>
-          <TouchableOpacity onPress={() => loadFiles(currentPath)}>
-            <Ionicons name="refresh" size={20} color="#64748b" />
+        <View style={styles.fileTabs}>
+          <TouchableOpacity
+            style={[styles.fileTab, activeFileTab === 'cloud' && styles.fileTabActive]}
+            onPress={() => switchFileTab('cloud')}
+          >
+            <Ionicons
+              name={hasApiContext ? 'cloud-outline' : 'folder-outline'}
+              size={18}
+              color={activeFileTab === 'cloud' ? '#ffffff' : '#64748b'}
+            />
+            <Text style={[styles.fileTabText, activeFileTab === 'cloud' && styles.fileTabTextActive]}>
+              {hasApiContext ? 'Cloud Files' : 'Files'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.fileTab, activeFileTab === 'sync' && styles.fileTabActive]}
+            onPress={() => switchFileTab('sync')}
+          >
+            <Ionicons
+              name="sync-outline"
+              size={18}
+              color={activeFileTab === 'sync' ? '#ffffff' : '#64748b'}
+            />
+            <Text style={[styles.fileTabText, activeFileTab === 'sync' && styles.fileTabTextActive]}>
+              Sync Offline
+            </Text>
           </TouchableOpacity>
         </View>
 
-        {isLoading ? (
-          <ActivityIndicator size="large" color="#3b82f6" style={{ marginTop: 20 }} />
+        {activeFileTab === 'cloud' ? (
+          <>
+            <View style={styles.listHeader}>
+              <Text style={styles.listTitle}>{hasApiContext ? 'Cloud Files' : 'Files'}</Text>
+              <TouchableOpacity onPress={() => loadFiles(currentPath)}>
+                <Ionicons name="refresh" size={20} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+
+            {isLoading ? (
+              <ActivityIndicator size="large" color="#3b82f6" style={{ marginTop: 20 }} />
+            ) : (
+              <FlatList
+                data={files}
+                keyExtractor={item => item.id}
+                renderItem={renderFileItem}
+                contentContainerStyle={styles.listContainer}
+                ListEmptyComponent={<Text style={styles.emptyText}>No files found</Text>}
+              />
+            )}
+          </>
         ) : (
-          <FlatList
-            data={files}
-            keyExtractor={item => item.id}
-            renderItem={renderFileItem}
-            contentContainerStyle={styles.listContainer}
-            ListEmptyComponent={<Text style={styles.emptyText}>No files found</Text>}
-          />
+          <View style={styles.syncOfflinePanel}>
+            <View style={styles.syncOfflineIcon}>
+              <Ionicons name="cloud-done-outline" size={34} color="#2563eb" />
+            </View>
+            <Text style={styles.syncOfflineTitle}>Sync Offline</Text>
+            <Text style={styles.syncOfflineText}>No offline sync items yet.</Text>
+            <TouchableOpacity style={styles.syncOfflineButton} onPress={() => switchFileTab('cloud')}>
+              <Ionicons name="folder-open-outline" size={18} color="#ffffff" />
+              <Text style={styles.syncOfflineButtonText}>Open Cloud Files</Text>
+            </TouchableOpacity>
+          </View>
         )}
       </View>
 
@@ -1203,6 +1269,10 @@ const styles = StyleSheet.create({
   addBtn: {
     padding: 4,
   },
+  addBtnPlaceholder: {
+    width: 36,
+    height: 36,
+  },
   headerTitle: {
     fontSize: 20,
     fontWeight: 'bold',
@@ -1250,6 +1320,34 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.7)',
     fontSize: 12,
     fontWeight: '500',
+  },
+  fileTabs: {
+    flexDirection: 'row',
+    gap: 10,
+    backgroundColor: '#e2e8f0',
+    borderRadius: 14,
+    padding: 4,
+    marginBottom: 16,
+  },
+  fileTab: {
+    flex: 1,
+    minHeight: 42,
+    borderRadius: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  fileTabActive: {
+    backgroundColor: '#2563eb',
+  },
+  fileTabText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#64748b',
+  },
+  fileTabTextActive: {
+    color: '#ffffff',
   },
   listHeader: {
     flexDirection: 'row',
@@ -1326,6 +1424,52 @@ const styles = StyleSheet.create({
     color: '#64748b',
     marginTop: 40,
     fontSize: 16,
+  },
+  syncOfflinePanel: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    padding: 28,
+    marginTop: 4,
+  },
+  syncOfflineIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 20,
+    backgroundColor: '#eff6ff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  syncOfflineTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0f172a',
+    marginBottom: 6,
+  },
+  syncOfflineText: {
+    fontSize: 14,
+    color: '#64748b',
+    textAlign: 'center',
+    marginBottom: 18,
+  },
+  syncOfflineButton: {
+    minHeight: 44,
+    borderRadius: 12,
+    backgroundColor: '#2563eb',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+  },
+  syncOfflineButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
   },
   bottomNav: {
     height: 48,
