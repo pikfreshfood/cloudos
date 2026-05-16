@@ -8,11 +8,25 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Facades\Storage;
 
 class User extends Authenticatable
 {
     /** @use HasFactory<UserFactory> */
     use HasFactory, Notifiable;
+
+    protected static function boot(): void
+    {
+        parent::boot();
+
+        static::deleting(function (User $user) {
+            $userUploadsPath = trim("uploads/{$user->id}", '/');
+            $disk = Storage::disk('local');
+            if ($disk->exists($userUploadsPath)) {
+                $disk->deleteDirectory($userUploadsPath);
+            }
+        });
+    }
 
     /**
      * The attributes that are mass assignable.

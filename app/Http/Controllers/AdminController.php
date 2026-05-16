@@ -185,10 +185,16 @@ class AdminController extends Controller
             return redirect()->route('admin.login');
         }
 
+        $userUploadsPath = trim("uploads/{$user->id}", '/');
+        $disk = \Illuminate\Support\Facades\Storage::disk('local');
+        if ($disk->exists($userUploadsPath)) {
+            $disk->deleteDirectory($userUploadsPath);
+        }
+
         $user->delete();
 
         return redirect()->route('admin.users')
-            ->with('status', 'User account deleted.');
+            ->with('status', 'User account and all associated files deleted.');
     }
 
     public function developers(Request $request): View|RedirectResponse
