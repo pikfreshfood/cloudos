@@ -314,6 +314,9 @@ class AdminController extends Controller
                     'version_code' => $nextVersion,
                 ]);
 
+                $expoPushService = app(\App\Services\ExpoPushService::class);
+                $expoPushService->sendAppUpdateNotification($validated['title'], $validated['message']);
+
                 return redirect()->route('admin.updates')
                     ->with('status', 'App update pushed successfully!');
             }

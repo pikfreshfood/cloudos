@@ -52,6 +52,57 @@ class ExpoPushService
         ]);
     }
 
+    public function sendAppUpdateNotification(string $title, string $message): void
+    {
+        try {
+            if (! Schema::hasTable('devices') || ! Schema::hasColumn('devices', 'push_token')) {
+                Log::info('Expo push skipped: devices push_token column is missing.');
+                return;
+            }
+
+            $tokens = DB::table('devices')
+                ->whereNotNull('push_token')
+                ->pluck('push_token')
+                ->filter()
+                ->unique()
+                ->values();
+
+            if ($tokens->isEmpty()) {
+                Log::info('Expo push skipped: no tokens found for app update.');
+                return;
+            }
+
+            $payload = $tokens
+                ->map(fn ($token) => [
+                    'to' => $token,
+                    'title' => $title,
+                    'body' => $message,
+                    'sound' => 'default',
+                    'priority' => 'high',
+                    'data' => [
+                        'kind' => 'app_update',
+                    ],
+                ])
+                ->values()
+                ->all();
+
+            $response = Http::timeout(8)
+                ->acceptJson()
+                ->post(self::EXPO_PUSH_URL, count($payload) === 1 ? $payload[0] : $payload);
+
+            if (! $response->successful()) {
+                Log::warning('Expo push failed for app update.', [
+                    'status' => $response->status(),
+                    'body' => $response->body(),
+                ]);
+            }
+        } catch (Throwable $e) {
+            Log::warning('Expo push exception for app update.', [
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
     private function sendToPhoneNumber(string $phoneNumber, array $message): void
     {
         try {
