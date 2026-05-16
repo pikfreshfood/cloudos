@@ -12,7 +12,11 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('contacts', function (Blueprint $table) {
-            $table->unsignedBigInteger('device_id')->nullable()->after('user_id');
+            $table->dropUnique(['user_id', 'phone_number']);
+        });
+
+        Schema::table('contacts', function (Blueprint $table) {
+            $table->string('device_id')->nullable()->after('user_id');
             $table->index(['user_id', 'device_id']);
             $table->unique(['user_id', 'device_id', 'phone_number']);
         });
@@ -27,6 +31,7 @@ return new class extends Migration
             $table->dropUnique(['user_id', 'device_id', 'phone_number']);
             $table->dropIndex(['user_id', 'device_id']);
             $table->dropColumn('device_id');
+            $table->unique(['user_id', 'phone_number']);
         });
     }
 };

@@ -55,6 +55,7 @@ class ContactController extends Controller
                 'message' => 'Phone number is required.',
                 'errors' => [
                     'phone_number' => ['Phone number is required.'],
+                ],
             ], 422);
         }
 
