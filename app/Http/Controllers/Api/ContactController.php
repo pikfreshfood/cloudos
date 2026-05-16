@@ -23,7 +23,7 @@ class ContactController extends Controller
             ->with('contactUser:id,name,phone_number')
             ->where('user_id', $validated['user_id']);
 
-        if (! empty($validated['device_id'])) {
+        if ($this->hasContactDeviceIdColumn() && ! empty($validated['device_id'])) {
             $query->where(function ($q) use ($validated) {
                 $q->where('device_id', $validated['device_id'])
                   ->orWhereNull('device_id');
@@ -71,7 +71,9 @@ class ContactController extends Controller
             'phone_number' => $validated['phone_number'],
         ];
 
-        if (! empty($validated['device_id'])) {
+        $hasDeviceIdColumn = $this->hasContactDeviceIdColumn();
+
+        if ($hasDeviceIdColumn && ! empty($validated['device_id'])) {
             $updateOrCreate['device_id'] = $validated['device_id'];
         }
 
@@ -80,7 +82,7 @@ class ContactController extends Controller
             [
                 'name' => trim($validated['name']),
                 'contact_user_id' => $linkedUser?->id,
-                ...(! empty($validated['device_id']) ? ['device_id' => $validated['device_id']] : []),
+                ...($hasDeviceIdColumn && ! empty($validated['device_id']) ? ['device_id' => $validated['device_id']] : []),
             ]
         );
 
@@ -106,7 +108,7 @@ class ContactController extends Controller
         $query = Contact::query()
             ->where('user_id', $userId);
 
-        if (! empty($validated['device_id'])) {
+        if ($this->hasContactDeviceIdColumn() && ! empty($validated['device_id'])) {
             $query->where(function ($q) use ($validated) {
                 $q->where('device_id', $validated['device_id'])
                   ->orWhereNull('device_id');
@@ -134,7 +136,7 @@ class ContactController extends Controller
         $query = Contact::query()
             ->where('user_id', $validated['user_id']);
 
-        if (! empty($validated['device_id'])) {
+        if ($this->hasContactDeviceIdColumn() && ! empty($validated['device_id'])) {
             $query->where(function ($q) use ($validated) {
                 $q->where('device_id', $validated['device_id'])
                   ->orWhereNull('device_id');
@@ -218,6 +220,11 @@ class ContactController extends Controller
             ->where('phone_number', $phoneNumber)
             ->orWhere('phone_number', $digits)
             ->first();
+    }
+
+    private function hasContactDeviceIdColumn(): bool
+    {
+        return Schema::hasColumn('contacts', 'device_id');
     }
 
     private function mapDevice(object $device): array
