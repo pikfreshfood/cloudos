@@ -16,11 +16,16 @@ class ContactController extends Controller
     {
         $validated = $request->validate([
             'user_id' => ['required', 'integer', 'exists:users,id'],
+            'device_id' => ['required', 'string'],
         ]);
 
         $contacts = Contact::query()
             ->with('contactUser:id,name,phone_number')
             ->where('user_id', $validated['user_id'])
+            ->where(function ($query) use ($validated) {
+                $query->where('device_id', $validated['device_id'])
+                      ->orWhereNull('device_id');
+            })
             ->orderBy('name')
             ->get()
             ->map(fn (Contact $contact) => $this->mapContact($contact))
@@ -33,6 +38,7 @@ class ContactController extends Controller
     {
         $validated = $request->validate([
             'user_id' => ['required', 'integer', 'exists:users,id'],
+            'device_id' => ['required', 'string'],
             'name' => ['required', 'string', 'max:255'],
             'phone_number' => ['required', 'string', 'max:50'],
         ]);
@@ -58,6 +64,7 @@ class ContactController extends Controller
         $contact = Contact::query()->updateOrCreate(
             [
                 'user_id' => $validated['user_id'],
+                'device_id' => $validated['device_id'],
                 'phone_number' => $validated['phone_number'],
             ],
             [
@@ -78,14 +85,20 @@ class ContactController extends Controller
     {
         $validated = $request->validate([
             'user_id' => ['required', 'integer', 'exists:users,id'],
+            'device_id' => ['required', 'string'],
             'contact_id' => ['required', 'integer', 'exists:contacts,id'],
         ]);
 
         $userId = $validated['user_id'];
+        $deviceId = $validated['device_id'];
         $contactId = $validated['contact_id'];
 
         $contact = Contact::query()
             ->where('user_id', $userId)
+            ->where(function ($query) use ($deviceId) {
+                $query->where('device_id', $deviceId)
+                      ->orWhereNull('device_id');
+            })
             ->findOrFail($contactId);
 
         $contact->delete();
@@ -99,12 +112,17 @@ class ContactController extends Controller
     {
         $validated = $request->validate([
             'user_id' => ['required', 'integer', 'exists:users,id'],
+            'device_id' => ['required', 'string'],
             'contact_ids' => ['required', 'array', 'min:1'],
             'contact_ids.*' => ['integer', 'exists:contacts,id'],
         ]);
 
         $deletedCount = Contact::query()
             ->where('user_id', $validated['user_id'])
+            ->where(function ($query) use ($validated) {
+                $query->where('device_id', $validated['device_id'])
+                      ->orWhereNull('device_id');
+            })
             ->whereIn('id', $validated['contact_ids'])
             ->delete();
 
