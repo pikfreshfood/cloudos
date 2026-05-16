@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\MediaController;
 use App\Http\Controllers\Api\MessageController;
 use App\Http\Controllers\Api\PaystackPaymentController;
 use App\Http\Controllers\Api\SignalController;
+use App\Http\Controllers\Api\SyncStateController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/health', function () {
@@ -82,4 +83,12 @@ Route::prefix('payments/paystack')->group(function () {
 Route::prefix('app-updates')->group(function () {
     Route::get('/latest', [AppUpdateController::class, 'latest']);
     Route::post('/mark-seen', [AppUpdateController::class, 'markSeen']);
+});
+
+Route::prefix('sync-states')->group(function () {
+    Route::get('/', [SyncStateController::class, 'index']);
+    Route::get('/show', [SyncStateController::class, 'show']);
+    Route::post('/', [SyncStateController::class, 'store']);
+    Route::patch('/', [SyncStateController::class, 'update']);
+    Route::delete('/', [SyncStateController::class, 'destroy']);
 });
