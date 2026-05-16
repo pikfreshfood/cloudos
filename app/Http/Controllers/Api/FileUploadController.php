@@ -21,12 +21,15 @@ class FileUploadController extends Controller
             'user_id' => ['required', 'string', 'max:255'],
             'device_id' => ['required', 'string', 'max:255'],
             'folder_path' => ['nullable', 'string', 'max:500'],
+            'show_excluded' => ['nullable', 'boolean'],
         ]);
 
         $folderPath = $this->sanitizeFolderPath($validated['folder_path'] ?? '');
         $deviceBasePath = trim("uploads/{$validated['user_id']}/{$validated['device_id']}", '/');
         $basePath = trim("uploads/{$validated['user_id']}/{$validated['device_id']}/{$folderPath}", '/');
         $disk = Storage::disk('local');
+        $showExcluded = $validated['show_excluded'] ?? false;
+        $excludedFolderName = 'Excluded from Sync';
 
         try {
             $usedSpace = $this->getDeviceUsedSpace($validated['user_id'], $validated['device_id']);
@@ -41,6 +44,12 @@ class FileUploadController extends Controller
             $directories = collect($disk->directories($basePath))
                 ->map(fn ($directory) => $this->mapDirectory($directory, $basePath))
                 ->filter()
+                ->filter(function ($dir) use ($showExcluded, $excludedFolderName) {
+                    if ($showExcluded) {
+                        return true;
+                    }
+                    return $dir['name'] !== $excludedFolderName;
+                })
                 ->values();
 
             $files = collect($disk->files($basePath))
@@ -206,6 +215,117 @@ class FileUploadController extends Controller
                 'folder_path' => trim(($folderPath ? "{$folderPath}/" : '') . $name, '/'),
             ],
         ], 201);
+    }
+
+    public function createSyncFolderStructure(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'user_id' => ['required', 'string', 'max:255'],
+            'device_id' => ['required', 'string', 'max:255'],
+        ]);
+
+        $deviceBasePath = trim("uploads/{$validated['user_id']}/{$validated['device_id']}", '/');
+        $disk = Storage::disk('local');
+
+        $syncFolders = [
+            'Camera',
+            'Documents',
+            'Downloads',
+            'Pictures',
+            'Music',
+            'Videos',
+            'Recordings',
+            'Screenshots',
+            'WhatsApp',
+            'Telegram',
+        ];
+
+        $createdFolders = [];
+
+        foreach ($syncFolders as $folderName) {
+            $folderPath = trim("{$deviceBasePath}/{$folderName}", '/');
+            if (! $disk->exists($folderPath)) {
+                $this->ensureLocalStoragePath($folderPath);
+                $createdFolders[] = [
+                    'name' => $folderName,
+                    'path' => $folderPath,
+                ];
+            }
+        }
+
+        return response()->json([
+            'message' => count($createdFolders) > 0 
+                ? 'Sync folder structure created successfully.' 
+                : 'Sync folder structure already exists.',
+            'created_folders' => $createdFolders,
+            'total_folders' => count($syncFolders),
+        ]);
+    }
+
+    public function excludeFromSync(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'user_id' => ['required', 'string', 'max:255'],
+            'device_id' => ['required', 'string', 'max:255'],
+            'path' => ['required', 'string', 'max:1000'],
+            'type' => ['required', 'in:file,folder'],
+        ]);
+
+        $disk = Storage::disk('local');
+        $sourcePath = $this->resolveManagedPath($validated['user_id'], $validated['device_id'], $validated['path']);
+        $excludedFolderName = 'Excluded from Sync';
+        $excludedFolderPath = trim("uploads/{$validated['user_id']}/{$validated['device_id']}/{$excludedFolderName}", '/');
+
+        if (! $disk->exists($sourcePath)) {
+            return response()->json(['message' => 'Item not found.'], 404);
+        }
+
+        if (basename($sourcePath) === $excludedFolderName) {
+            return response()->json(['message' => 'Cannot exclude the excluded folder itself.'], 422);
+        }
+
+        $this->ensureLocalStoragePath($excludedFolderPath);
+
+        $destinationPath = $validated['type'] === 'folder'
+            ? $this->uniqueDirectoryPath($disk, $excludedFolderPath, basename($sourcePath))
+            : trim($excludedFolderPath . '/' . $this->uniqueFilename($excludedFolderPath, basename($sourcePath)), '/');
+
+        $this->moveManagedItem($disk, $sourcePath, $destinationPath, $validated['type']);
+
+        return response()->json([
+            'message' => 'Item excluded from sync successfully.',
+            'path' => $destinationPath,
+        ]);
+    }
+
+    public function restoreFromExclude(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'user_id' => ['required', 'string', 'max:255'],
+            'device_id' => ['required', 'string', 'max:255'],
+            'path' => ['required', 'string', 'max:1000'],
+            'type' => ['required', 'in:file,folder'],
+        ]);
+
+        $disk = Storage::disk('local');
+        $excludedFolderName = 'Excluded from Sync';
+        $deviceBasePath = trim("uploads/{$validated['user_id']}/{$validated['device_id']}", '/');
+        $sourcePath = $this->resolveManagedPath($validated['user_id'], $validated['device_id'], $validated['path']);
+
+        if (! $disk->exists($sourcePath)) {
+            return response()->json(['message' => 'Item not found.'], 404);
+        }
+
+        $destinationPath = $validated['type'] === 'folder'
+            ? $this->uniqueDirectoryPath($disk, $deviceBasePath, basename($sourcePath))
+            : trim($deviceBasePath . '/' . $this->uniqueFilename($deviceBasePath, basename($sourcePath)), '/');
+
+        $this->moveManagedItem($disk, $sourcePath, $destinationPath, $validated['type']);
+
+        return response()->json([
+            'message' => 'Item restored to sync successfully.',
+            'path' => $destinationPath,
+        ]);
     }
 
     public function saveHtmlCompanion(Request $request): JsonResponse

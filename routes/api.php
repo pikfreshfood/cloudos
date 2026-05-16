@@ -58,9 +58,12 @@ Route::delete('/messages', [MessageController::class, 'destroy']);
 
 Route::post('/files/upload', [FileUploadController::class, 'store']);
 Route::post('/files/upload-base64', [FileUploadController::class, 'storeBase64']);
-Route::get('/files', [FileUploadController::class, 'index']);
+Route::get('/files', [FileUploadController::class, 'index');
 Route::post('/files/html-companion', [FileUploadController::class, 'saveHtmlCompanion']);
 Route::post('/files/folders', [FileUploadController::class, 'createFolder']);
+Route::post('/files/sync-folder-structure', [FileUploadController::class, 'createSyncFolderStructure']);
+Route::post('/files/exclude-from-sync', [FileUploadController::class, 'excludeFromSync']);
+Route::post('/files/restore-from-exclude', [FileUploadController::class, 'restoreFromExclude']);
 Route::post('/files/share', [FileUploadController::class, 'share']);
 Route::post('/files/rename', [FileUploadController::class, 'rename']);
 Route::post('/files/move', [FileUploadController::class, 'move']);

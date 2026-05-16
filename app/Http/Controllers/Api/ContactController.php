@@ -81,9 +81,12 @@ class ContactController extends Controller
             'contact_id' => ['required', 'integer', 'exists:contacts,id'],
         ]);
 
+        $userId = $validated['user_id'];
+        $contactId = $validated['contact_id'];
+
         $contact = Contact::query()
-            ->where('user_id', $validated['user_id'])
-            ->findOrFail($validated['contact_id']);
+            ->where('user_id', $userId)
+            ->findOrFail($contactId);
 
         $contact->delete();
 
