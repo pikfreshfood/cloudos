@@ -1,0 +1,48 @@
+<?php
+
+namespace App\Http\Controllers\Api;
+
+use App\Http\Controllers\Controller;
+use App\Models\SupportMessage;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+
+class SupportMessageController extends Controller
+{
+    public function index(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'user_id' => ['required', 'integer', 'exists:users,id'],
+        ]);
+
+        $messages = SupportMessage::query()
+            ->where('user_id', $validated['user_id'])
+            ->latest()
+            ->with(['user:id,name,email', 'device:id,name,phone_number'])
+            ->get();
+
+        return response()->json([
+            'messages' => $messages,
+        ]);
+    }
+
+    public function store(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'user_id' => ['required', 'integer', 'exists:users,id'],
+            'device_id' => ['nullable', 'integer', 'exists:devices,id'],
+            'name' => ['required', 'string', 'max:255'],
+            'email' => ['required', 'email', 'max:255'],
+            'topic' => ['required', 'string', 'max:120'],
+            'message' => ['required', 'string', 'max:5000'],
+        ]);
+
+        $supportMessage = SupportMessage::create($validated);
+        $supportMessage->load(['user:id,name,email', 'device:id,name,phone_number']);
+
+        return response()->json([
+            'message' => 'Support message sent successfully.',
+            'support_message' => $supportMessage,
+        ], 201);
+    }
+}

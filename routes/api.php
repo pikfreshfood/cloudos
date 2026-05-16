@@ -12,6 +12,7 @@ use App\Http\Controllers\Api\MessageController;
 use App\Http\Controllers\Api\PaystackPaymentController;
 use App\Http\Controllers\Api\SignalController;
 use App\Http\Controllers\Api\SyncStateController;
+use App\Http\Controllers\Api\SupportMessageController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/health', function () {
@@ -91,4 +92,9 @@ Route::prefix('sync-states')->group(function () {
     Route::post('/', [SyncStateController::class, 'store']);
     Route::patch('/', [SyncStateController::class, 'update']);
     Route::delete('/', [SyncStateController::class, 'destroy']);
+});
+
+Route::prefix('support-messages')->group(function () {
+    Route::get('/', [SupportMessageController::class, 'index']);
+    Route::post('/', [SupportMessageController::class, 'store']);
 });
