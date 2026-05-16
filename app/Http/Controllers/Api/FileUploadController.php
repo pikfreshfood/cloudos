@@ -222,12 +222,14 @@ class FileUploadController extends Controller
         $validated = $request->validate([
             'user_id' => ['required', 'string', 'max:255'],
             'device_id' => ['required', 'string', 'max:255'],
+            'folders' => ['nullable', 'array'],
+            'folders.*' => ['required', 'string', 'max:500'],
         ]);
 
         $deviceBasePath = trim("uploads/{$validated['user_id']}/{$validated['device_id']}", '/');
         $disk = Storage::disk('local');
 
-        $syncFolders = [
+        $defaultFolders = [
             'Camera',
             'Documents',
             'Downloads',
@@ -240,15 +242,17 @@ class FileUploadController extends Controller
             'Telegram',
         ];
 
+        $foldersToCreate = $validated['folders'] ?? $defaultFolders;
         $createdFolders = [];
 
-        foreach ($syncFolders as $folderName) {
-            $folderPath = trim("{$deviceBasePath}/{$folderName}", '/');
-            if (! $disk->exists($folderPath)) {
-                $this->ensureLocalStoragePath($folderPath);
+        foreach ($foldersToCreate as $folderPath) {
+            $fullPath = trim("{$deviceBasePath}/{$folderPath}", '/');
+            if (! $disk->exists($fullPath)) {
+                $this->ensureLocalStoragePath($fullPath);
                 $createdFolders[] = [
-                    'name' => $folderName,
-                    'path' => $folderPath,
+                    'name' => basename($folderPath),
+                    'path' => $fullPath,
+                    'folder_path' => $folderPath,
                 ];
             }
         }
@@ -258,7 +262,7 @@ class FileUploadController extends Controller
                 ? 'Sync folder structure created successfully.' 
                 : 'Sync folder structure already exists.',
             'created_folders' => $createdFolders,
-            'total_folders' => count($syncFolders),
+            'total_folders' => count($foldersToCreate),
         ]);
     }
 
