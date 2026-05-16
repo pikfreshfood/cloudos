@@ -60,48 +60,61 @@
                 <span class="muted">{{ $messages->total() }} messages</span>
             </div>
 
-            <div style="margin-bottom: 24px; padding: 16px; background: var(--line); border-radius: 12px;">
-                <h3 style="margin-top: 0; margin-bottom: 12px;">Send Reply</h3>
-                <form class="inline-form" method="POST" action="{{ route('admin.support.reply') }}">
-                    @csrf
-                    <div style="display: flex; gap: 12px; margin-bottom: 12px; align-items: center;">
-                        <label style="min-width: 120px;">Recipient Phone:</label>
-                        <input type="text" name="recipient_phone_number" required style="flex: 1; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px;" placeholder="e.g., 1234567890" value="{{ $selectedUser->phone_number ?? '' }}">
-                    </div>
-                    <div style="display: flex; gap: 12px; margin-bottom: 12px; align-items: flex-start;">
-                        <label style="min-width: 120px; margin-top: 8px;">Reply:</label>
-                        <textarea name="body" required style="flex: 1; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; min-height: 80px;" placeholder="Write your reply here..."></textarea>
-                    </div>
-                    <div style="display: flex; justify-content: flex-end;">
-                        <button class="btn btn-primary" type="submit">Send Reply</button>
-                    </div>
-                </form>
-            </div>
+            @if($selectedUser)
+                <div style="margin-bottom: 24px; padding: 16px; background: var(--line); border-radius: 12px;">
+                    <h3 style="margin-top: 0; margin-bottom: 12px;">Send Reply</h3>
+                    <form class="inline-form" method="POST" action="{{ route('admin.support.reply') }}">
+                        @csrf
+                        <input type="hidden" name="recipient_phone_number" value="{{ $selectedUser->phone_number }}">
+                        <div style="display: flex; gap: 12px; margin-bottom: 12px; align-items: flex-start;">
+                            <label style="min-width: 120px; margin-top: 8px;">Reply:</label>
+                            <textarea name="body" required style="flex: 1; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; min-height: 120px;" placeholder="Write your reply here..."></textarea>
+                        </div>
+                        <div style="display: flex; justify-content: flex-end;">
+                            <button class="btn btn-primary" type="submit">Send Reply</button>
+                        </div>
+                    </form>
+                </div>
+            @else
+                <div style="margin-bottom: 24px; padding: 16px; background: var(--line); border-radius: 12px;">
+                    <h3 style="margin-top: 0; margin-bottom: 12px;">Send Reply</h3>
+                    <form class="inline-form" method="POST" action="{{ route('admin.support.reply') }}">
+                        @csrf
+                        <div style="display: flex; gap: 12px; margin-bottom: 12px; align-items: center;">
+                            <label style="min-width: 120px;">Recipient Phone:</label>
+                            <input type="text" name="recipient_phone_number" required style="flex: 1; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px;" placeholder="e.g., 1234567890">
+                        </div>
+                        <div style="display: flex; gap: 12px; margin-bottom: 12px; align-items: flex-start;">
+                            <label style="min-width: 120px; margin-top: 8px;">Reply:</label>
+                            <textarea name="body" required style="flex: 1; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; min-height: 80px;" placeholder="Write your reply here..."></textarea>
+                        </div>
+                        <div style="display: flex; justify-content: flex-end;">
+                            <button class="btn btn-primary" type="submit">Send Reply</button>
+                        </div>
+                    </form>
+                </div>
+            @endif
 
-            <table>
-                <thead>
-                    <tr><th>Sender</th><th>Recipient</th><th>Direction</th><th>Date</th><th>Message</th></tr>
-                </thead>
-                <tbody>
-                    @forelse ($messages as $message)
-                        <tr>
-                            <td>{{ $message->sender_name ?? $message->sender_phone_number }}</td>
-                            <td>{{ $message->recipient_phone_number }}</td>
-                            <td>
+            <div style="display: flex; flex-direction: column; gap: 12px; max-height: 500px; overflow-y: auto;">
+                @forelse ($messages as $message)
+                    <div style="padding: 12px; border-radius: 8px; background: {{ $message->sender_phone_number === '0000000000' ? 'var(--line)' : 'transparent' }};">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                            <div style="font-weight: 500;">
+                                {{ $message->sender_name ?? $message->sender_phone_number }}
                                 @if($message->sender_phone_number === '0000000000')
-                                    <span class="status status-in_progress">Admin → User</span>
+                                    <span class="status status-in_progress" style="margin-left: 8px;">Admin</span>
                                 @else
-                                    <span class="status status-open">User → Admin</span>
+                                    <span class="status status-open" style="margin-left: 8px;">User</span>
                                 @endif
-                            </td>
-                            <td>{{ $message->created_at->format('M d, Y H:i') }}</td>
-                            <td>{{ \Illuminate\Support\Str::limit($message->body, 120) }}</td>
-                        </tr>
-                    @empty
-                        <tr><td colspan="5" class="muted">No support messages yet.</td></tr>
-                    @endforelse
-                </tbody>
-            </table>
+                            </div>
+                            <div class="muted" style="font-size: 12px;">{{ $message->created_at->format('M d, Y H:i') }}</div>
+                        </div>
+                        <div style="white-space: pre-wrap;">{{ $message->body }}</div>
+                    </div>
+                @empty
+                    <div class="muted" style="padding: 24px; text-align: center;">No messages yet.</div>
+                @endforelse
+            </div>
 
             @if ($messages->hasPages())
                 <div style="margin-top: 24px; display: flex; justify-content: center; gap: 8px;">
