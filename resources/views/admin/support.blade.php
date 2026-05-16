@@ -9,32 +9,46 @@
         <h2>Support Messages</h2>
         <span class="muted">{{ $messages->count() }} messages</span>
     </div>
+
+    <div style="margin-bottom: 24px; padding: 16px; background: var(--line); border-radius: 12px;">
+        <h3 style="margin-top: 0; margin-bottom: 12px;">Send Reply</h3>
+        <form class="inline-form" method="POST" action="{{ route('admin.support.reply') }}">
+            @csrf
+            <div style="display: flex; gap: 12px; margin-bottom: 12px; align-items: center;">
+                <label style="min-width: 120px;">Recipient Phone:</label>
+                <input type="text" name="recipient_phone_number" required style="flex: 1; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px;" placeholder="e.g., 1234567890">
+            </div>
+            <div style="display: flex; gap: 12px; margin-bottom: 12px; align-items: flex-start;">
+                <label style="min-width: 120px; margin-top: 8px;">Reply:</label>
+                <textarea name="body" required style="flex: 1; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; min-height: 80px;" placeholder="Write your reply here..."></textarea>
+            </div>
+            <div style="display: flex; justify-content: flex-end;">
+                <button class="btn btn-primary" type="submit">Send Reply</button>
+            </div>
+        </form>
+    </div>
+
     <table>
         <thead>
-            <tr><th>Name</th><th>Email</th><th>Topic</th><th>Status</th><th>Message</th><th>Action</th></tr>
+            <tr><th>Sender</th><th>Recipient</th><th>Direction</th><th>Date</th><th>Message</th></tr>
         </thead>
         <tbody>
             @forelse ($messages as $message)
                 <tr>
-                    <td>{{ $message->name }}</td>
-                    <td>{{ $message->email }}</td>
-                    <td>{{ $message->topic }}</td>
-                    <td><span class="status status-{{ $message->status }}">{{ str_replace('_', ' ', ucfirst($message->status)) }}</span></td>
-                    <td>{{ \Illuminate\Support\Str::limit($message->message, 90) }}</td>
+                    <td>{{ $message->sender_name ?? $message->sender_phone_number }}</td>
+                    <td>{{ $message->recipient_phone_number }}</td>
                     <td>
-                        <form class="inline-form" method="POST" action="{{ route('admin.support.status', $message) }}">
-                            @csrf
-                            <select name="status" required>
-                                <option value="open" @selected($message->status === 'open')>Open</option>
-                                <option value="in_progress" @selected($message->status === 'in_progress')>In progress</option>
-                                <option value="closed" @selected($message->status === 'closed')>Closed</option>
-                            </select>
-                            <button class="btn btn-primary" type="submit">Save</button>
-                        </form>
+                        @if($message->sender_phone_number === '0000000000')
+                            <span class="status status-in_progress">Admin → User</span>
+                        @else
+                            <span class="status status-open">User → Admin</span>
+                        @endif
                     </td>
+                    <td>{{ $message->created_at->format('M d, Y H:i') }}</td>
+                    <td>{{ \Illuminate\Support\Str::limit($message->body, 120) }}</td>
                 </tr>
             @empty
-                <tr><td colspan="6" class="muted">No support messages yet.</td></tr>
+                <tr><td colspan="5" class="muted">No support messages yet.</td></tr>
             @endforelse
         </tbody>
     </table>

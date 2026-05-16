@@ -221,9 +221,22 @@ class AdminController extends Controller
             return redirect()->route('admin.login');
         }
 
+        $supportPhoneNumber = '0000000000';
+        $messages = collect();
+
+        if (Schema::hasTable('messages')) {
+            $messages = \App\Models\Message::query()
+                ->where(function ($q) use ($supportPhoneNumber) {
+                    $q->where('sender_phone_number', $supportPhoneNumber)
+                        ->orWhere('recipient_phone_number', $supportPhoneNumber);
+                })
+                ->latest()
+                ->paginate(15);
+        }
+
         return view('admin.support', [
             'stats' => $this->stats(),
-            'messages' => SupportMessage::latest()->paginate(15),
+            'messages' => $messages,
         ]);
     }
 
@@ -370,6 +383,45 @@ class AdminController extends Controller
 
         return redirect()->route('admin.support')
             ->with('status', 'Support message status updated.');
+    }
+
+    public function sendSupportReply(Request $request): RedirectResponse
+    {
+        if (! $this->isLoggedIn($request)) {
+            return redirect()->route('admin.login');
+        }
+
+        $validated = $request->validate([
+            'recipient_phone_number' => ['required', 'regex:/^\d{3,20}$/'],
+            'body' => ['required', 'string', 'max:5000'],
+        ]);
+
+        $supportPhoneNumber = '0000000000';
+        $normalizedRecipient = preg_replace('/\D+/g', '', $validated['recipient_phone_number']) ?? '';
+
+        if (! Schema::hasTable('messages')) {
+            return redirect()->route('admin.support')
+                ->with('error', 'Messages table not ready.');
+        }
+
+        \App\Models\Message::create([
+            'sender_user_id' => null,
+            'sender_name' => 'Support',
+            'sender_phone_number' => $supportPhoneNumber,
+            'recipient_phone_number' => $normalizedRecipient,
+            'type' => 'normal',
+            'body' => trim($validated['body']),
+        ]);
+
+        app(\App\Services\ExpoPushService::class)->sendMessageNotification(
+            $normalizedRecipient,
+            $supportPhoneNumber,
+            'Support',
+            (string) trim($validated['body'])
+        );
+
+        return redirect()->route('admin.support')
+            ->with('status', 'Reply sent successfully.');
     }
 
     public function changePasswordForm(Request $request): View|RedirectResponse
