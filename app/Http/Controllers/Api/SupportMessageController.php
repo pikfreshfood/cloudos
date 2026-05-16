@@ -28,7 +28,7 @@ class SupportMessageController extends Controller
             'support' => [
                 'name' => 'Cloud OS Support',
                 'initials' => 'CS',
-                'avatar_url' => null,
+                'avatar_url' => asset('images/support.svg'),
             ],
         ]);
     }
@@ -55,7 +55,7 @@ class SupportMessageController extends Controller
             'support' => [
                 'name' => 'Cloud OS Support',
                 'initials' => 'CS',
-                'avatar_url' => null,
+                'avatar_url' => asset('images/support.svg'),
             ],
         ], 201);
     }
