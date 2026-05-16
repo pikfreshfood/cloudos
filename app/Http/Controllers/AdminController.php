@@ -264,6 +264,8 @@ class AdminController extends Controller
                     'last_message_time' => $lastMsg ? $lastMsg->created_at : null,
                     'message_count' => $userMsgs->count(),
                 ];
+            })->filter(function ($conv) {
+                return $conv['user'] !== null;
             })->sortByDesc('last_message_time')->values();
 
             if ($selectedUserId) {
@@ -282,6 +284,21 @@ class AdminController extends Controller
                         ->latest()
                         ->paginate(15);
                 }
+            } elseif ($conversations->isNotEmpty()) {
+                $firstConv = $conversations->first();
+                $selectedUser = $firstConv['user'];
+                $messages = \App\Models\Message::query()
+                    ->where(function ($q) use ($supportPhoneNumber, $selectedUser) {
+                        $q->where(function ($q2) use ($supportPhoneNumber, $selectedUser) {
+                            $q2->where('sender_phone_number', $supportPhoneNumber)
+                               ->where('recipient_phone_number', $selectedUser->phone_number);
+                        })->orWhere(function ($q2) use ($supportPhoneNumber, $selectedUser) {
+                            $q2->where('sender_phone_number', $selectedUser->phone_number)
+                               ->where('recipient_phone_number', $supportPhoneNumber);
+                        });
+                    })
+                    ->latest()
+                    ->paginate(15);
             } else {
                 $messages = \App\Models\Message::query()
                     ->where(function ($q) use ($supportPhoneNumber) {
