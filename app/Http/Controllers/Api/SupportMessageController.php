@@ -31,11 +31,13 @@ class SupportMessageController extends Controller
         $validated = $request->validate([
             'user_id' => ['required', 'integer', 'exists:users,id'],
             'device_id' => ['nullable', 'integer', 'exists:devices,id'],
-            'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'email', 'max:255'],
             'topic' => ['required', 'string', 'max:120'],
             'message' => ['required', 'string', 'max:5000'],
         ]);
+
+        $user = \App\Models\User::findOrFail($validated['user_id']);
+        $validated['name'] = $user->name;
+        $validated['email'] = $user->email;
 
         $supportMessage = SupportMessage::create($validated);
         $supportMessage->load(['user:id,name,email', 'device:id,name,phone_number']);

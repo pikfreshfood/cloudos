@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\DeveloperFileManagerController;
 use App\Http\Controllers\Api\DeviceController;
 use App\Http\Controllers\Api\FileUploadController;
 use App\Http\Controllers\Api\MediaController;
+use App\Http\Controllers\Api\MediaStateController;
 use App\Http\Controllers\Api\MessageController;
 use App\Http\Controllers\Api\PaystackPaymentController;
 use App\Http\Controllers\Api\SignalController;
@@ -97,4 +98,11 @@ Route::prefix('sync-states')->group(function () {
 Route::prefix('support-messages')->group(function () {
     Route::get('/', [SupportMessageController::class, 'index']);
     Route::post('/', [SupportMessageController::class, 'store']);
+});
+
+Route::prefix('media-states')->group(function () {
+    Route::get('/', [MediaStateController::class, 'index']);
+    Route::get('/show', [MediaStateController::class, 'show']);
+    Route::post('/', [MediaStateController::class, 'store']);
+    Route::delete('/', [MediaStateController::class, 'destroy']);
 });

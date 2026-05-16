@@ -222,21 +222,76 @@ class AdminController extends Controller
         }
 
         $supportPhoneNumber = '0000000000';
+        $selectedUserId = $request->query('user_id');
+        $selectedUser = null;
         $messages = collect();
+        $conversations = collect();
 
         if (Schema::hasTable('messages')) {
-            $messages = \App\Models\Message::query()
+            $allMessages = \App\Models\Message::query()
                 ->where(function ($q) use ($supportPhoneNumber) {
                     $q->where('sender_phone_number', $supportPhoneNumber)
                         ->orWhere('recipient_phone_number', $supportPhoneNumber);
                 })
                 ->latest()
-                ->paginate(15);
+                ->get();
+
+            $userPhoneNumbers = $allMessages->map(function ($msg) use ($supportPhoneNumber) {
+                return $msg->sender_phone_number === $supportPhoneNumber
+                    ? $msg->recipient_phone_number
+                    : $msg->sender_phone_number;
+            })->unique();
+
+            $users = \App\Models\User::whereIn('phone_number', $userPhoneNumbers)->get();
+
+            $conversations = $userPhoneNumbers->map(function ($phoneNumber) use ($allMessages, $supportPhoneNumber, $users) {
+                $userMsgs = $allMessages->filter(function ($msg) use ($phoneNumber, $supportPhoneNumber) {
+                    return ($msg->sender_phone_number === $supportPhoneNumber && $msg->recipient_phone_number === $phoneNumber) ||
+                           ($msg->sender_phone_number === $phoneNumber && $msg->recipient_phone_number === $supportPhoneNumber);
+                });
+                $lastMsg = $userMsgs->first();
+                $user = $users->where('phone_number', $phoneNumber)->first();
+                return [
+                    'phone_number' => $phoneNumber,
+                    'user' => $user,
+                    'last_message' => $lastMsg,
+                    'last_message_time' => $lastMsg ? $lastMsg->created_at : null,
+                    'message_count' => $userMsgs->count(),
+                ];
+            })->sortByDesc('last_message_time')->values();
+
+            if ($selectedUserId) {
+                $selectedUser = $users->find($selectedUserId);
+                if ($selectedUser) {
+                    $messages = \App\Models\Message::query()
+                        ->where(function ($q) use ($supportPhoneNumber, $selectedUser) {
+                            $q->where(function ($q2) use ($supportPhoneNumber, $selectedUser) {
+                                $q2->where('sender_phone_number', $supportPhoneNumber)
+                                   ->where('recipient_phone_number', $selectedUser->phone_number);
+                            })->orWhere(function ($q2) use ($supportPhoneNumber, $selectedUser) {
+                                $q2->where('sender_phone_number', $selectedUser->phone_number)
+                                   ->where('recipient_phone_number', $supportPhoneNumber);
+                            });
+                        })
+                        ->latest()
+                        ->paginate(15);
+                }
+            } else {
+                $messages = \App\Models\Message::query()
+                    ->where(function ($q) use ($supportPhoneNumber) {
+                        $q->where('sender_phone_number', $supportPhoneNumber)
+                            ->orWhere('recipient_phone_number', $supportPhoneNumber);
+                    })
+                    ->latest()
+                    ->paginate(15);
+            }
         }
 
         return view('admin.support', [
             'stats' => $this->stats(),
             'messages' => $messages,
+            'conversations' => $conversations,
+            'selectedUser' => $selectedUser,
         ]);
     }
 
