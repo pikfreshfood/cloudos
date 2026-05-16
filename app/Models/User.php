@@ -43,6 +43,37 @@ class User extends Authenticatable
     ];
 
     /**
+     * The accessors to append to the model's array form.
+     *
+     * @var list<string>
+     */
+    protected $appends = [
+        'initials',
+        'avatar_url',
+    ];
+
+    public function getInitialsAttribute(): string
+    {
+        $nameParts = explode(' ', trim($this->name));
+        $initials = '';
+        foreach ($nameParts as $part) {
+            if (trim($part) !== '') {
+                $initials .= strtoupper(substr($part, 0, 1));
+                if (strlen($initials) >= 2) break;
+            }
+        }
+        return $initials ?: 'U';
+    }
+
+    public function getAvatarUrlAttribute(): ?string
+    {
+        if ($this->profile_picture) {
+            return url('/storage/' . $this->profile_picture);
+        }
+        return null;
+    }
+
+    /**
      * The attributes that should be hidden for serialization.
      *
      * @var list<string>

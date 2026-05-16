@@ -18,11 +18,18 @@ class SupportMessageController extends Controller
         $messages = SupportMessage::query()
             ->where('user_id', $validated['user_id'])
             ->latest()
-            ->with(['user:id,name,email', 'device:id,name,phone_number'])
+            ->with(['user:id,name,email,username,phone_number', 'device:id,name,phone_number'])
             ->get();
+
+        $user = \App\Models\User::find($validated['user_id']);
 
         return response()->json([
             'messages' => $messages,
+            'support' => [
+                'name' => 'Cloud OS Support',
+                'initials' => 'CS',
+                'avatar_url' => null,
+            ],
         ]);
     }
 
@@ -40,11 +47,16 @@ class SupportMessageController extends Controller
         $validated['email'] = $user->email;
 
         $supportMessage = SupportMessage::create($validated);
-        $supportMessage->load(['user:id,name,email', 'device:id,name,phone_number']);
+        $supportMessage->load(['user:id,name,email,username,phone_number', 'device:id,name,phone_number']);
 
         return response()->json([
             'message' => 'Support message sent successfully.',
             'support_message' => $supportMessage,
+            'support' => [
+                'name' => 'Cloud OS Support',
+                'initials' => 'CS',
+                'avatar_url' => null,
+            ],
         ], 201);
     }
 }

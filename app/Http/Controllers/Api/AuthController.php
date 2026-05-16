@@ -167,6 +167,8 @@ class AuthController extends Controller
             'username' => $user->username,
             'email' => $user->email,
             'phone_number' => $user->phone_number,
+            'initials' => $user->initials,
+            'avatar_url' => $user->avatar_url,
             'created_at' => optional($user->created_at)?->toISOString(),
         ];
     }
