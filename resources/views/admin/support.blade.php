@@ -140,6 +140,14 @@
         white-space: pre-wrap;
         word-break: break-word;
     }
+    .bubble-image {
+        display: block;
+        width: min(260px, 100%);
+        max-height: 320px;
+        object-fit: cover;
+        border-radius: 10px;
+        margin-top: 8px;
+    }
     .bubble-time {
         display: block;
         color: #495875;
@@ -162,6 +170,23 @@
         margin-top: 10px;
         background: #10245d;
         border-radius: 10px;
+    }
+    .attachment-field {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 10px;
+        color: #4056a6;
+        font-weight: 700;
+        cursor: pointer;
+    }
+    .attachment-field input {
+        display: none;
+    }
+    .attachment-name {
+        color: #4056a6;
+        font-size: 13px;
+        margin-left: 10px;
     }
     .reply-status {
         color: #4056a6;
@@ -207,7 +232,9 @@
                     </div>
                     <div class="thread-email">{{ $user?->email ?? ($deviceLabel ?: $phoneNumber) }}</div>
                     @if($conv['last_message'])
-                        <div class="thread-preview">{{ \Illuminate\Support\Str::limit($conv['last_message']->body, 70) }}</div>
+                        <div class="thread-preview">
+                            {{ \Illuminate\Support\Str::limit($conv['last_message']->body ?: ($conv['last_message']->attachment_path ? 'Image attachment' : ''), 70) }}
+                        </div>
                     @endif
                 </a>
             @empty
@@ -234,7 +261,16 @@
                     <div class="bubble-row {{ $isAdmin ? 'admin' : '' }}" data-message-id="{{ $message->id }}">
                         <div class="bubble {{ $isAdmin ? 'admin' : '' }}">
                             <span class="bubble-author">{{ $isAdmin ? 'Support' : $selectedUser->name }}</span>
-                            <div class="bubble-body">{{ $message->body }}</div>
+                            @if($message->body)
+                                <div class="bubble-body">{{ $message->body }}</div>
+                            @endif
+                            @if($message->attachment_path)
+                                <img
+                                    class="bubble-image"
+                                    src="{{ url('/message-attachments/' . ltrim($message->attachment_path, '/')) }}"
+                                    alt="{{ $message->attachment_name ?: 'Chat image' }}"
+                                >
+                            @endif
                             <span class="bubble-time">{{ $message->created_at?->format('d M Y, H:i') }}</span>
                         </div>
                     </div>
@@ -243,10 +279,15 @@
                 @endforelse
             </div>
 
-            <form class="reply-form" id="supportReplyForm" method="POST" action="{{ route('admin.support.reply') }}">
+            <form class="reply-form" id="supportReplyForm" method="POST" action="{{ route('admin.support.reply') }}" enctype="multipart/form-data">
                 @csrf
                 <input type="hidden" name="recipient_phone_number" value="{{ $selectedPhoneNumber }}">
-                <textarea name="body" required placeholder="Type your reply..." id="supportReplyBody"></textarea>
+                <textarea name="body" placeholder="Type your reply..." id="supportReplyBody"></textarea>
+                <label class="attachment-field">
+                    Attach image
+                    <input type="file" name="attachment" id="supportReplyAttachment" accept="image/png,image/jpeg,image/webp,image/gif">
+                </label>
+                <span class="attachment-name" id="supportReplyAttachmentName"></span>
                 <button class="btn btn-primary" type="submit">Send Reply</button>
                 <div class="reply-status" id="supportReplyStatus" aria-live="polite"></div>
             </form>
@@ -265,6 +306,8 @@
         const form = document.getElementById('supportReplyForm');
         const messages = document.getElementById('supportChatMessages');
         const body = document.getElementById('supportReplyBody');
+        const attachment = document.getElementById('supportReplyAttachment');
+        const attachmentName = document.getElementById('supportReplyAttachmentName');
         const status = document.getElementById('supportReplyStatus');
 
         if (!form || !messages || !body) {
@@ -306,12 +349,24 @@
             const messageBody = document.createElement('div');
             messageBody.className = 'bubble-body';
             messageBody.textContent = message.body || '';
+            if (message.body) {
+                bubble.appendChild(messageBody);
+            }
+
+            if (message.attachment_url) {
+                const image = document.createElement('img');
+                image.className = 'bubble-image';
+                image.src = message.attachment_url;
+                image.alt = message.attachment_name || 'Chat image';
+                bubble.appendChild(image);
+            }
 
             const time = document.createElement('span');
             time.className = 'bubble-time';
             time.textContent = message.created_at_display || new Date().toLocaleString();
 
-            bubble.append(author, messageBody, time);
+            bubble.prepend(author);
+            bubble.appendChild(time);
             row.appendChild(bubble);
             messages.appendChild(row);
             scrollToBottom();
@@ -343,13 +398,17 @@
             loadThreadMessages().catch(() => {});
         }, 3000);
 
+        attachment?.addEventListener('change', () => {
+            attachmentName.textContent = attachment.files?.[0]?.name || '';
+        });
+
         form.addEventListener('submit', async (event) => {
             event.preventDefault();
 
             const submit = form.querySelector('button[type="submit"]');
             const formData = new FormData(form);
 
-            if (!String(formData.get('body') || '').trim()) {
+            if (!String(formData.get('body') || '').trim() && !formData.get('attachment')?.size) {
                 return;
             }
 
@@ -374,6 +433,8 @@
 
                 appendChatMessage({ ...(payload.data || {}), is_admin: true, author: 'Support' });
                 body.value = '';
+                if (attachment) attachment.value = '';
+                if (attachmentName) attachmentName.textContent = '';
                 status.textContent = 'Reply sent.';
             } catch (error) {
                 status.textContent = error.message || 'Could not send reply.';

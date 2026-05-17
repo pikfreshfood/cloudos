@@ -13,6 +13,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
@@ -380,6 +381,9 @@ class AdminController extends Controller
                     'body' => $message->body,
                     'is_admin' => $isAdmin,
                     'author' => $isAdmin ? 'Support' : ($message->sender_name ?: 'User'),
+                    'attachment_url' => $this->messageAttachmentUrl($message),
+                    'attachment_name' => $message->attachment_name,
+                    'attachment_mime' => $message->attachment_mime,
                     'created_at' => optional($message->created_at)?->toISOString(),
                     'created_at_display' => optional($message->created_at)?->format('d M Y, H:i'),
                 ];
@@ -389,6 +393,19 @@ class AdminController extends Controller
         return response()->json([
             'messages' => $messages,
         ]);
+    }
+
+    public function messageAttachment(string $path)
+    {
+        $path = str_replace('\\', '/', trim($path, '/'));
+
+        abort_unless(
+            str_starts_with($path, 'message-attachments/') && ! str_contains($path, '..'),
+            404
+        );
+        abort_unless(Storage::disk('public')->exists($path), 404);
+
+        return Storage::disk('public')->response($path);
     }
 
     public function payments(Request $request): View|RedirectResponse
@@ -548,11 +565,23 @@ class AdminController extends Controller
 
         $validated = $request->validate([
             'recipient_phone_number' => ['required', 'regex:/^\d{3,20}$/'],
-            'body' => ['required', 'string', 'max:5000'],
+            'body' => ['nullable', 'string', 'max:5000'],
+            'attachment' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp,gif', 'max:5120'],
         ]);
 
         $supportPhoneNumber = '0000000000';
         $normalizedRecipient = preg_replace('/\D+/', '', $validated['recipient_phone_number']) ?? '';
+        $body = trim((string) ($validated['body'] ?? ''));
+        $attachment = $request->file('attachment');
+
+        if ($body === '' && ! $attachment) {
+            if ($request->expectsJson()) {
+                return response()->json(['message' => 'Reply text or image attachment is required.'], 422);
+            }
+
+            return redirect()->route('admin.support')
+                ->withErrors(['body' => 'Reply text or image attachment is required.']);
+        }
 
         if (! Schema::hasTable('messages')) {
             if ($request->expectsJson()) {
@@ -573,18 +602,22 @@ class AdminController extends Controller
                 ->withErrors(['body' => 'No user found for this support thread.']);
         }
 
+        $this->ensureMessageAttachmentColumns();
+        $attachmentData = $this->storeMessageAttachment($attachment);
+
         $message = \App\Models\Message::create([
             'sender_user_id' => $senderUserId,
             'sender_name' => 'Support',
             'sender_phone_number' => $supportPhoneNumber,
             'recipient_phone_number' => $normalizedRecipient,
             'type' => 'normal',
-            'body' => trim($validated['body']),
+            'body' => $body,
+            ...$attachmentData,
         ]);
 
         app(\App\Services\ExpoPushService::class)->sendSupportNotification(
             $normalizedRecipient,
-            (string) trim($validated['body'])
+            (string) ($message->body ?: ($message->attachment_path ? 'Image attachment' : ''))
         );
 
         if ($request->expectsJson()) {
@@ -596,6 +629,9 @@ class AdminController extends Controller
                     'sender_name' => $message->sender_name,
                     'sender_phone_number' => $message->sender_phone_number,
                     'recipient_phone_number' => $message->recipient_phone_number,
+                    'attachment_url' => $this->messageAttachmentUrl($message),
+                    'attachment_name' => $message->attachment_name,
+                    'attachment_mime' => $message->attachment_mime,
                     'created_at' => optional($message->created_at)?->toISOString(),
                     'created_at_display' => optional($message->created_at)?->format('d M Y, H:i'),
                 ],
@@ -752,6 +788,55 @@ class AdminController extends Controller
         }
 
         return User::query()->value('id') ? (int) User::query()->value('id') : null;
+    }
+
+    private function ensureMessageAttachmentColumns(): void
+    {
+        if (! Schema::hasTable('messages')) {
+            return;
+        }
+
+        $columns = Schema::getColumnListing('messages');
+
+        Schema::table('messages', function ($table) use ($columns) {
+            if (! in_array('attachment_path', $columns, true)) {
+                $table->string('attachment_path')->nullable();
+            }
+
+            if (! in_array('attachment_name', $columns, true)) {
+                $table->string('attachment_name')->nullable();
+            }
+
+            if (! in_array('attachment_mime', $columns, true)) {
+                $table->string('attachment_mime', 100)->nullable();
+            }
+        });
+    }
+
+    private function storeMessageAttachment($attachment): array
+    {
+        if (! $attachment) {
+            return [];
+        }
+
+        $extension = strtolower($attachment->getClientOriginalExtension() ?: $attachment->extension() ?: 'jpg');
+        $filename = now()->format('YmdHis') . '-' . bin2hex(random_bytes(8)) . '.' . $extension;
+        $path = $attachment->storeAs('message-attachments', $filename, 'public');
+
+        return [
+            'attachment_path' => $path,
+            'attachment_name' => $attachment->getClientOriginalName() ?: $filename,
+            'attachment_mime' => $attachment->getClientMimeType(),
+        ];
+    }
+
+    private function messageAttachmentUrl($message): ?string
+    {
+        if (! $message->attachment_path) {
+            return null;
+        }
+
+        return url('/message-attachments/' . ltrim($message->attachment_path, '/'));
     }
 
     private function normalizePhoneNumber(?string $phoneNumber): ?string

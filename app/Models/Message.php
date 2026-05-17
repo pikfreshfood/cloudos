@@ -17,6 +17,9 @@ class Message extends Model
         'recipient_phone_number',
         'type',
         'body',
+        'attachment_path',
+        'attachment_name',
+        'attachment_mime',
         'read_at',
     ];
 

@@ -26,6 +26,9 @@ Route::view('/device-call', 'pages.device-call')->name('device-call');
 Route::view('/faq', 'pages.faq')->name('faq');
 Route::view('/terms-and-conditions', 'pages.terms')->name('terms');
 Route::view('/privacy-policy', 'pages.privacy')->name('privacy');
+Route::get('/message-attachments/{path}', [AdminController::class, 'messageAttachment'])
+    ->where('path', '.*')
+    ->name('message.attachments.show');
 Route::get('/password-reset', function (Request $request) {
     return view('pages.password-reset', [
         'email' => $request->query('email', ''),

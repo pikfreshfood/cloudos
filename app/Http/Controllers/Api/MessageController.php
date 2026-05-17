@@ -153,15 +153,18 @@ class MessageController extends Controller
             'user_id' => ['required', 'integer', 'exists:users,id'],
             'sender_phone_number' => ['required', 'regex:/^\d{3,20}$/'],
             'recipient_phone_number' => ['required', 'regex:/^\d{3,20}$/'],
-            'body' => ['required', 'string', 'max:5000'],
+            'body' => ['nullable', 'string', 'max:5000'],
+            'attachment' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp,gif', 'max:5120'],
         ]);
 
         $validated['sender_phone_number'] = $this->normalizePhoneNumber($validated['sender_phone_number']);
         $validated['recipient_phone_number'] = $this->normalizePhoneNumber($validated['recipient_phone_number']);
+        $body = trim((string) ($validated['body'] ?? ''));
+        $attachment = $request->file('attachment');
 
-        if (empty(trim((string) $validated['body']))) {
+        if ($body === '' && ! $attachment) {
             return response()->json([
-                'message' => 'Message body is required.',
+                'message' => 'Message body or image attachment is required.',
             ], 422);
         }
 
@@ -188,20 +191,23 @@ class MessageController extends Controller
             }
         }
 
+        $attachmentData = $this->storeMessageAttachment($attachment);
+
         $message = Message::query()->create([
             'sender_user_id' => $sender->id,
             'sender_name' => $senderDisplayName,
             'sender_phone_number' => $validated['sender_phone_number'],
             'recipient_phone_number' => $recipientPhoneNumber,
             'type' => 'normal',
-            'body' => trim($validated['body']),
+            'body' => $body,
+            ...$attachmentData,
         ]);
 
         app(ExpoPushService::class)->sendMessageNotification(
             $recipientPhoneNumber,
             $validated['sender_phone_number'],
             (string) $senderDisplayName,
-            (string) $message->body
+            (string) ($message->body ?: ($message->attachment_path ? 'Image attachment' : ''))
         );
 
         return response()->json([
@@ -333,6 +339,9 @@ class MessageController extends Controller
                     $table->string('recipient_phone_number', 50);
                     $table->string('type', 20)->default('normal');
                     $table->text('body');
+                    $table->string('attachment_path')->nullable();
+                    $table->string('attachment_name')->nullable();
+                    $table->string('attachment_mime', 100)->nullable();
                     $table->timestamp('read_at')->nullable();
                     $table->timestamps();
 
@@ -372,6 +381,18 @@ class MessageController extends Controller
                     $table->timestamp('read_at')->nullable();
                 }
 
+                if (! in_array('attachment_path', $columns, true)) {
+                    $table->string('attachment_path')->nullable();
+                }
+
+                if (! in_array('attachment_name', $columns, true)) {
+                    $table->string('attachment_name')->nullable();
+                }
+
+                if (! in_array('attachment_mime', $columns, true)) {
+                    $table->string('attachment_mime', 100)->nullable();
+                }
+
                 if (! in_array('created_at', $columns, true)) {
                     $table->timestamp('created_at')->nullable();
                 }
@@ -392,6 +413,9 @@ class MessageController extends Controller
                 && Schema::hasColumn('messages', 'recipient_phone_number')
                 && Schema::hasColumn('messages', 'type')
                 && Schema::hasColumn('messages', 'body')
+                && Schema::hasColumn('messages', 'attachment_path')
+                && Schema::hasColumn('messages', 'attachment_name')
+                && Schema::hasColumn('messages', 'attachment_mime')
                 && Schema::hasColumn('messages', 'read_at');
         } catch (Throwable) {
             return false;
@@ -409,8 +433,37 @@ class MessageController extends Controller
             'sender_phone_number' => $message->sender_phone_number,
             'recipient_phone_number' => $message->recipient_phone_number,
             'direction' => $this->normalizePhoneNumber($message->sender_phone_number) === $viewerPhoneNumber ? 'outgoing' : 'incoming',
+            'attachment_url' => $this->messageAttachmentUrl($message),
+            'attachment_name' => $message->attachment_name,
+            'attachment_mime' => $message->attachment_mime,
             'read_at' => optional($message->read_at)?->toISOString(),
             'created_at' => optional($message->created_at)?->toISOString(),
         ];
+    }
+
+    private function storeMessageAttachment($attachment): array
+    {
+        if (! $attachment) {
+            return [];
+        }
+
+        $extension = strtolower($attachment->getClientOriginalExtension() ?: $attachment->extension() ?: 'jpg');
+        $filename = now()->format('YmdHis') . '-' . bin2hex(random_bytes(8)) . '.' . $extension;
+        $path = $attachment->storeAs('message-attachments', $filename, 'public');
+
+        return [
+            'attachment_path' => $path,
+            'attachment_name' => $attachment->getClientOriginalName() ?: $filename,
+            'attachment_mime' => $attachment->getClientMimeType(),
+        ];
+    }
+
+    private function messageAttachmentUrl(Message $message): ?string
+    {
+        if (! $message->attachment_path) {
+            return null;
+        }
+
+        return url('/message-attachments/' . ltrim($message->attachment_path, '/'));
     }
 }
