@@ -1,14 +1,13 @@
-import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, ActivityIndicator, Dimensions, Modal, Alert, AppState } from 'react-native';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, ActivityIndicator, Dimensions, Modal, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import { useEvent } from 'expo';
 import { createVideoPlayer, VideoView } from 'expo-video';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useAuth } from '../context/AuthContext';
 import { useOS } from '../context/OSContext';
-import { fileService, mediaService } from '../services/api';
+import { fileService } from '../services/api';
 
 const { width, height } = Dimensions.get('window');
 const GRID_GAP = 10;
@@ -54,8 +53,6 @@ export default function VideoPlayerScreen({ navigation }) {
   const hasApiContext = !!currentUser?.id && !!currentDevice?.id;
   const player = useMemo(() => createVideoPlayer(null), []);
   const fullscreenPlayer = useMemo(() => createVideoPlayer(null), []);
-  const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
-  const restoredVideoStateRef = useRef(false);
 
   useEffect(() => () => {
     player.release();
@@ -173,99 +170,6 @@ export default function VideoPlayerScreen({ navigation }) {
     }
   };
 
-  const getActivePlayer = useCallback(() => (
-    isFullscreen ? fullscreenPlayer : player
-  ), [fullscreenPlayer, isFullscreen, player]);
-
-  const persistVideoState = useCallback(async ({ playbackStatus } = {}) => {
-    if (!currentUser?.id || !currentDevice?.id || !selectedVideo) return;
-
-    const activePlayer = getActivePlayer();
-    const positionMs = Math.round((Number(activePlayer.currentTime) || 0) * 1000);
-    const durationMs = Math.round((Number(activePlayer.duration) || 0) * 1000);
-
-    await mediaService.saveState({
-      userId: currentUser.id,
-      deviceId: currentDevice.id,
-      mediaType: 'video',
-      mediaPath: selectedVideo.remotePath || selectedVideo.id,
-      mediaTitle: selectedVideo.title,
-      positionMs,
-      durationMs,
-      playbackStatus: playbackStatus || (activePlayer.playing ? 'playing' : 'paused'),
-      metadata: {
-        videoId: selectedVideo.id,
-        uri: selectedVideo.uri,
-      },
-    });
-  }, [currentDevice?.id, currentUser?.id, getActivePlayer, selectedVideo]);
-
-  useEffect(() => {
-    if (!currentUser?.id || !currentDevice?.id || restoredVideoStateRef.current || !videos.length) return;
-
-    let cancelled = false;
-
-    const restoreLatestVideoState = async () => {
-      try {
-        const response = await mediaService.listStates({
-          userId: currentUser.id,
-          mediaType: 'video',
-        });
-        const latestState = response.media_states?.[0];
-        if (!latestState?.media_path || cancelled) return;
-
-        const video = videos.find((item) => (
-          item.remotePath === latestState.media_path
-          || item.id === latestState.media_path
-          || item.id === latestState.metadata?.videoId
-        ));
-        if (!video) return;
-
-        restoredVideoStateRef.current = true;
-        setPlayerError('');
-        setSelectedVideo(video);
-        setIsFullscreen(false);
-        fullscreenPlayer.pause();
-        player.loop = true;
-        player.replace(video.uri);
-        if (Number(latestState.position_ms) > 0) {
-          player.currentTime = Number(latestState.position_ms) / 1000;
-        }
-        if (latestState.playback_status === 'playing') {
-          player.play();
-        } else {
-          player.pause();
-        }
-      } catch (error) {
-        console.log('Failed to restore remote video playback state:', error?.response?.data?.message || error?.message || error);
-      }
-    };
-
-    restoreLatestVideoState().catch(() => {});
-
-    return () => {
-      cancelled = true;
-    };
-  }, [currentDevice?.id, currentUser?.id, fullscreenPlayer, player, videos]);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      persistVideoState().catch(() => {});
-    }, 3000);
-
-    return () => clearInterval(interval);
-  }, [persistVideoState]);
-
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', (nextState) => {
-      if (nextState !== 'active') {
-        persistVideoState({ playbackStatus: 'paused' }).catch(() => {});
-      }
-    });
-
-    return () => subscription.remove();
-  }, [persistVideoState]);
-
   const handlePlayVideo = (video) => {
     try {
       setPlayerError('');
@@ -282,7 +186,6 @@ export default function VideoPlayerScreen({ navigation }) {
   };
 
   const closeVideo = () => {
-    persistVideoState({ playbackStatus: 'paused' }).catch(() => {});
     player.pause();
     fullscreenPlayer.pause();
     setSelectedVideo(null);
@@ -389,7 +292,6 @@ export default function VideoPlayerScreen({ navigation }) {
               <Text style={styles.infoText}>Now Playing</Text>
               <Text style={styles.infoTitle}>{selectedVideo.title}</Text>
               <Text style={styles.infoSize}>Size: {selectedVideo.size}</Text>
-              <Text style={styles.infoPlayback}>{isPlaying ? 'Playing' : 'Paused'}</Text>
               {!!playerError && <Text style={styles.playerError}>{playerError}</Text>}
             </View>
           </View>
@@ -649,12 +551,6 @@ const styles = StyleSheet.create({
   infoSize: {
     fontSize: 14,
     color: '#64748b',
-  },
-  infoPlayback: {
-    fontSize: 13,
-    color: '#334155',
-    marginTop: 8,
-    fontWeight: '600',
   },
   playerError: {
     marginTop: 8,

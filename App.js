@@ -13,14 +13,8 @@ import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { MusicPlayerProvider } from './src/context/MusicPlayerContext';
 import { messageService, signalService } from './src/services/api';
 import {
-  addNotificationResponseListener,
-  configureNotificationActions,
-  getLastNotificationResponse,
-  handleNotificationResponse,
-  isPushNotificationRuntimeAvailable,
   showIncomingCallNotification,
   showMessageNotification,
-  syncPushTokenForDevice,
 } from './src/utils/pushNotifications';
 import {
   getDefaultMessageToneOption,
@@ -564,74 +558,6 @@ function MessageNotificationWatcher() {
   return null;
 }
 
-function PushNotificationBridge() {
-  const { currentUser } = useAuth();
-  const { currentDevice } = useOS();
-  const handledResponseRef = React.useRef(new Set());
-
-  React.useEffect(() => {
-    if (!isPushNotificationRuntimeAvailable()) {
-      return;
-    }
-
-    configureNotificationActions().catch((error) => {
-      console.log('Failed to configure notification actions:', error?.message || error);
-    });
-  }, []);
-
-  React.useEffect(() => {
-    if (!isPushNotificationRuntimeAvailable()) {
-      return;
-    }
-
-    if (!currentUser?.id || !currentDevice?.id || !currentDevice?.phoneNumber) {
-      return;
-    }
-
-    syncPushTokenForDevice({ currentUser, currentDevice }).catch((error) => {
-      console.log('Failed to sync push token:', error?.message || error);
-    });
-  }, [currentDevice?.id, currentDevice?.phoneNumber, currentUser?.id]);
-
-  const processResponse = React.useCallback((response) => {
-    const responseId = response?.notification?.request?.identifier;
-    if (responseId && handledResponseRef.current.has(responseId)) {
-      return;
-    }
-
-    if (responseId) {
-      handledResponseRef.current.add(responseId);
-    }
-
-    handleNotificationResponse({
-      response,
-      currentUser,
-      currentDevice,
-      navigationRef,
-    }).catch((error) => {
-      console.log('Failed to handle notification action:', error?.message || error);
-    });
-  }, [currentDevice, currentUser]);
-
-  React.useEffect(() => {
-    if (!isPushNotificationRuntimeAvailable()) {
-      return undefined;
-    }
-
-    const subscription = addNotificationResponseListener(processResponse);
-
-    getLastNotificationResponse()
-      .then((response) => {
-        if (response) processResponse(response);
-      })
-      .catch(() => {});
-
-    return () => subscription.remove();
-  }, [processResponse]);
-
-  return null;
-}
-
 export default function App() {
   return (
     <AuthProvider>
@@ -652,7 +578,6 @@ export default function App() {
                     }}
                 >
                   <StatusBar style="auto" />
-                  <PushNotificationBridge />
                   <IncomingDeviceCallWatcher />
                   <MessageNotificationWatcher />
                     <Stack.Navigator 

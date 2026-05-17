@@ -1,5 +1,4 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { AppState } from 'react-native';
 import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useOS } from './OSContext';
@@ -7,9 +6,6 @@ import { useAuth } from './AuthContext';
 import { API_URL, mediaService } from '../services/api';
 
 const MusicPlayerContext = createContext();
-const MUSIC_STATE_FILE_NAME = 'music_player_state.json';
-const POSITION_PERSIST_GRANULARITY_MS = 2000;
-const MUSIC_MEDIA_TYPE = 'music';
 
 const createDefaultState = () => ({
   tracks: [],
@@ -31,8 +27,6 @@ export const MusicPlayerProvider = ({ children }) => {
   const playersRef = useRef({});
   const subscriptionsRef = useRef({});
   const statesRef = useRef({});
-  const hydratedDevicesRef = useRef({});
-  const persistRemoteMusicStateRef = useRef(async () => {});
 
   const configureAudioMode = useCallback(async (staysActiveInBackground = true) => {
     await setAudioModeAsync({
@@ -74,12 +68,6 @@ export const MusicPlayerProvider = ({ children }) => {
   const currentState = currentDeviceId
     ? statesByDevice[currentDeviceId] || createDefaultState()
     : createDefaultState();
-
-  const getMusicStatePath = useCallback(() => {
-    const storageDir = getStorageDir();
-    if (!storageDir || !currentDeviceId) return '';
-    return `${storageDir}${MUSIC_STATE_FILE_NAME}`;
-  }, [currentDeviceId, getStorageDir]);
 
   const loadTrackIntoDevice = useCallback(async ({ deviceId, index, shouldPlay = true }) => {
     const deviceState = getDeviceState(deviceId);
@@ -344,12 +332,6 @@ export const MusicPlayerProvider = ({ children }) => {
   const stopDevicePlayback = useCallback(async (deviceId = currentDeviceId) => {
     if (!deviceId) return;
 
-    try {
-      await persistRemoteMusicStateRef.current(deviceId, { playbackStatus: 'paused' });
-    } catch (error) {
-      console.error('Failed to sync playback state during shutdown:', error);
-    }
-
     const currentPlayer = playersRef.current[deviceId];
     subscriptionsRef.current[deviceId]?.remove?.();
     delete subscriptionsRef.current[deviceId];
@@ -384,113 +366,24 @@ export const MusicPlayerProvider = ({ children }) => {
   }, [configureAudioMode, currentDeviceId, updateDeviceState]);
 
   useEffect(() => {
-    let cancelled = false;
-
     const hydrateCurrentDevice = async () => {
       if (!currentDeviceId) return;
 
-      hydratedDevicesRef.current[currentDeviceId] = false;
-
-      let persistedState = null;
-      const musicStatePath = getMusicStatePath();
-      if (musicStatePath) {
-        try {
-          const info = await FileSystem.getInfoAsync(musicStatePath);
-          if (info.exists) {
-            const content = await FileSystem.readAsStringAsync(musicStatePath);
-            persistedState = JSON.parse(content);
-          }
-        } catch (error) {
-          console.error('Failed to load saved music state:', error);
-        }
-      }
-
-      if (currentUser?.id) {
-        try {
-          const response = await mediaService.listStates({
-            userId: currentUser.id,
-            mediaType: MUSIC_MEDIA_TYPE,
-          });
-          const latestRemoteState = response.media_states?.[0];
-          if (latestRemoteState?.media_path) {
-            persistedState = {
-              lastTrackId: latestRemoteState.metadata?.lastTrackId || latestRemoteState.media_path,
-              position: Number(latestRemoteState.position_ms) || 0,
-              volume: typeof latestRemoteState.metadata?.volume === 'number' ? latestRemoteState.metadata.volume : persistedState?.volume,
-              isMuted: typeof latestRemoteState.metadata?.isMuted === 'boolean' ? latestRemoteState.metadata.isMuted : persistedState?.isMuted,
-              repeatMode: latestRemoteState.metadata?.repeatMode === 'one' ? 'one' : 'all',
-              wasPlaying: latestRemoteState.playback_status === 'playing',
-            };
-          }
-        } catch (error) {
-          console.log('Failed to load remote music playback state:', error?.response?.data?.message || error?.message || error);
-        }
-      }
-
-      if (cancelled) return;
-
       updateDeviceState(currentDeviceId, (prev) => ({
         ...prev,
-        position: Number(persistedState?.position) || 0,
+        position: 0,
         progress: 0,
         duration: 0,
         currentTrackIndex: -1,
-        lastTrackId: persistedState?.lastTrackId || null,
-        isMuted: typeof persistedState?.isMuted === 'boolean' ? persistedState.isMuted : prev.isMuted,
-        volume: typeof persistedState?.volume === 'number' ? persistedState.volume : prev.volume,
-        repeatMode: persistedState?.repeatMode === 'one' ? 'one' : 'all',
+        lastTrackId: null,
         isPlaying: false,
       }));
 
-      const tracks = await refreshTracks(currentDeviceId);
-      if (cancelled || !tracks.length) {
-        hydratedDevicesRef.current[currentDeviceId] = true;
-        return;
-      }
-
-      const restoredState = getDeviceState(currentDeviceId);
-      const restoredIndex = restoredState.currentTrackIndex;
-      const restorePosition = Number(persistedState?.position) || 0;
-      const restorePlayback = !!persistedState?.wasPlaying;
-
-      if (restoredIndex >= 0 && restoredState.lastTrackId) {
-        try {
-          const player = await loadTrackIntoDevice({
-            deviceId: currentDeviceId,
-            index: restoredIndex,
-            shouldPlay: restorePlayback,
-          });
-
-          if (player) {
-            if (restorePosition > 0) {
-              player.seekTo(restorePosition / 1000);
-            }
-            setPlaybackStatusUpdate(currentDeviceId, player);
-            updateDeviceState(currentDeviceId, (prev) => ({
-              ...prev,
-              isPlaying: restorePlayback,
-              position: restorePosition,
-              progress: prev.duration ? restorePosition / prev.duration : 0,
-            }));
-          }
-        } catch (error) {
-          console.error('Failed to restore saved music session:', error);
-        }
-      }
-
-      hydratedDevicesRef.current[currentDeviceId] = true;
+      await refreshTracks(currentDeviceId);
     };
 
-    hydrateCurrentDevice().catch(() => {
-      if (currentDeviceId) {
-        hydratedDevicesRef.current[currentDeviceId] = true;
-      }
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [currentDeviceId, currentUser?.id, getDeviceState, getMusicStatePath, loadTrackIntoDevice, refreshTracks, setPlaybackStatusUpdate, updateDeviceState]);
+    hydrateCurrentDevice().catch(() => {});
+  }, [currentDeviceId, refreshTracks, updateDeviceState]);
 
   useEffect(() => {
     const pauseOtherDevices = async () => {
@@ -530,105 +423,6 @@ export const MusicPlayerProvider = ({ children }) => {
   const currentTrack = currentState.currentTrackIndex >= 0
     ? currentState.tracks[currentState.currentTrackIndex]
     : null;
-
-  const persistRemoteMusicState = useCallback(async (deviceId = currentDeviceId, options = {}) => {
-    if (!currentUser?.id || !deviceId) return;
-
-    const targetState = getDeviceState(deviceId);
-    const targetTrack = targetState.currentTrackIndex >= 0
-      ? targetState.tracks[targetState.currentTrackIndex]
-      : null;
-    const mediaPath = targetTrack?.path || targetTrack?.id;
-
-    if (!mediaPath) return;
-
-    await mediaService.saveState({
-      userId: currentUser.id,
-      deviceId,
-      mediaType: MUSIC_MEDIA_TYPE,
-      mediaPath,
-      mediaTitle: targetTrack?.title || 'Music',
-      positionMs: targetState.position,
-      durationMs: targetState.duration,
-      playbackStatus: options.playbackStatus || (targetState.isPlaying ? 'playing' : 'paused'),
-      metadata: {
-        lastTrackId: targetTrack?.id || targetState.lastTrackId || mediaPath,
-        volume: targetState.volume,
-        isMuted: targetState.isMuted,
-        repeatMode: targetState.repeatMode,
-      },
-    });
-  }, [currentDeviceId, currentUser?.id, getDeviceState]);
-
-  useEffect(() => {
-    persistRemoteMusicStateRef.current = persistRemoteMusicState;
-  }, [persistRemoteMusicState]);
-
-  const persistedPositionBucket = currentState.currentTrackIndex >= 0
-    ? Math.floor(currentState.position / POSITION_PERSIST_GRANULARITY_MS) * POSITION_PERSIST_GRANULARITY_MS
-    : 0;
-
-  useEffect(() => {
-    let isCancelled = false;
-
-    const persistCurrentState = async () => {
-      if (!currentDeviceId || !hydratedDevicesRef.current[currentDeviceId]) return;
-
-      const musicStatePath = getMusicStatePath();
-      if (!musicStatePath) return;
-
-      const payload = {
-        lastTrackId: currentTrack?.id || currentState.lastTrackId || null,
-        position: currentState.currentTrackIndex >= 0 ? currentState.position : 0,
-        volume: currentState.volume,
-        isMuted: currentState.isMuted,
-        repeatMode: currentState.repeatMode,
-        wasPlaying: currentState.currentTrackIndex >= 0 && currentState.isPlaying,
-      };
-
-      try {
-        if (!isCancelled) {
-          await FileSystem.writeAsStringAsync(musicStatePath, JSON.stringify(payload));
-          await persistRemoteMusicState(currentDeviceId);
-        }
-      } catch (error) {
-        console.error('Failed to save music player state:', error);
-      }
-    };
-
-    const timeoutId = setTimeout(() => {
-      persistCurrentState().catch(() => {});
-    }, 250);
-
-    return () => {
-      isCancelled = true;
-      clearTimeout(timeoutId);
-    };
-  }, [
-    currentDeviceId,
-    currentState.currentTrackIndex,
-    currentState.isMuted,
-    currentState.isPlaying,
-    currentState.lastTrackId,
-    currentState.repeatMode,
-    currentState.volume,
-    currentTrack?.id,
-    getMusicStatePath,
-    persistRemoteMusicState,
-    persistedPositionBucket,
-  ]);
-
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', (nextState) => {
-      if (nextState !== 'active') {
-        persistRemoteMusicState(currentDeviceId).catch((error) => {
-          console.log('Failed to sync playback state before app background:', error?.message || error);
-        });
-      }
-    });
-
-    return () => subscription.remove();
-  }, [currentDeviceId, persistRemoteMusicState]);
 
   const value = useMemo(() => ({
     tracks: currentState.tracks,
