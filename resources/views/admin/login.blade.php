@@ -4,6 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Cloud OS Admin Login</title>
+    <link rel="icon" type="image/png" href="{{ asset('images/cloud-os-logo.png') }}">
+    <link rel="apple-touch-icon" href="{{ asset('images/cloud-os-logo.png') }}">
     <style>
         :root { --bg:#071426; --panel:#ffffff; --ink:#0f1f33; --muted:#68778c; --line:#dce5ef; --brand:#155eef; --danger:#c2413b; }
         * { box-sizing: border-box; }

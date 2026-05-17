@@ -4,6 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>@yield('title', 'Cloud OS Admin')</title>
+    <link rel="icon" type="image/png" href="{{ asset('images/cloud-os-logo.png') }}">
+    <link rel="apple-touch-icon" href="{{ asset('images/cloud-os-logo.png') }}">
     <style>
         :root {
             --bg: #f4f7fb;

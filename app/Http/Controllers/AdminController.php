@@ -286,7 +286,8 @@ class AdminController extends Controller
             })->sortByDesc('last_message_time')->values();
 
             if ($selectedUserId) {
-                $selectedUser = $users->find($selectedUserId) ?: $deviceUsers->find($selectedUserId);
+                $selectedUser = $users->firstWhere('id', (int) $selectedUserId)
+                    ?: $deviceUsers->firstWhere('id', (int) $selectedUserId);
                 if ($selectedUser) {
                     $selectedPhoneNumber = $request->query('phone_number') ?: $selectedUser->phone_number;
                     $messages = \App\Models\Message::query()
