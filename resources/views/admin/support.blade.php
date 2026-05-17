@@ -3,117 +3,243 @@
 @section('title', 'Cloud OS Admin - Support')
 @section('header_title', 'Support')
 
+@push('styles')
+<style>
+    .support-shell {
+        display: grid;
+        grid-template-columns: 320px minmax(0, 1fr);
+        gap: 16px;
+        min-height: calc(100vh - 128px);
+    }
+    .thread-panel,
+    .chat-panel {
+        background: #ffffff;
+        border: 1px solid #cbd8f6;
+        border-radius: 12px;
+    }
+    .thread-panel {
+        padding: 16px 14px;
+        overflow: hidden;
+    }
+    .thread-title {
+        font-size: 18px;
+        font-weight: 900;
+        color: #071426;
+        margin-bottom: 12px;
+    }
+    .thread-list {
+        display: grid;
+        gap: 10px;
+        max-height: calc(100vh - 190px);
+        overflow-y: auto;
+    }
+    .thread-item {
+        display: block;
+        padding: 14px 12px;
+        border-radius: 10px;
+        text-decoration: none;
+        color: #0a1744;
+        border: 1px solid transparent;
+        background: #f7f9ff;
+    }
+    .thread-item.active {
+        background: #eaf1ff;
+        border-color: #a9c1ff;
+    }
+    .thread-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 6px;
+    }
+    .thread-name {
+        font-size: 16px;
+        font-weight: 900;
+        color: #071426;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .thread-time {
+        color: #4056a6;
+        font-size: 12px;
+        white-space: nowrap;
+    }
+    .thread-email,
+    .thread-preview {
+        color: #4056a6;
+        font-size: 13px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .thread-preview {
+        margin-top: 8px;
+    }
+    .chat-panel {
+        padding: 18px 16px 16px;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+    }
+    .chat-head {
+        border-bottom: 1px solid #cbd8f6;
+        padding-bottom: 14px;
+        margin-bottom: 14px;
+    }
+    .chat-name {
+        color: #071426;
+        font-size: 20px;
+        font-weight: 900;
+        margin-bottom: 4px;
+    }
+    .chat-email {
+        color: #4056a6;
+        font-size: 15px;
+    }
+    .chat-messages {
+        flex: 1;
+        min-height: 300px;
+        overflow-y: auto;
+        padding-right: 4px;
+    }
+    .bubble-row {
+        display: flex;
+        margin-bottom: 12px;
+    }
+    .bubble-row.admin {
+        justify-content: flex-end;
+    }
+    .bubble {
+        min-width: 130px;
+        max-width: 64%;
+        border: 1px solid #cbd8f6;
+        border-radius: 14px;
+        padding: 13px 14px;
+        background: #f7f9ff;
+        color: #071426;
+    }
+    .bubble.admin {
+        background: #10245d;
+        color: #ffffff;
+        border-color: #10245d;
+    }
+    .bubble-author {
+        display: block;
+        font-size: 12px;
+        font-weight: 900;
+        color: #495875;
+        margin-bottom: 7px;
+    }
+    .bubble.admin .bubble-author,
+    .bubble.admin .bubble-time {
+        color: #c7d2fe;
+    }
+    .bubble-body {
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+    .bubble-time {
+        display: block;
+        color: #495875;
+        font-size: 12px;
+        margin-top: 8px;
+    }
+    .reply-form {
+        border-top: 1px solid #cbd8f6;
+        padding-top: 14px;
+        margin-top: 14px;
+    }
+    .reply-form textarea {
+        min-height: 110px;
+        border: 1px solid #cbd8f6;
+        border-radius: 12px;
+        font-size: 15px;
+        padding: 14px;
+    }
+    .reply-form .btn {
+        margin-top: 10px;
+        background: #10245d;
+        border-radius: 10px;
+    }
+    @media (max-width: 900px) {
+        .support-shell {
+            grid-template-columns: 1fr;
+        }
+        .thread-list {
+            max-height: 260px;
+        }
+    }
+</style>
+@endpush
+
 @section('content')
-<div style="display: flex; gap: 24px; min-height: 600px; width: 100%;">
-    <div style="width: 350px; flex-shrink: 0;">
-        <div class="card" style="height: 100%;">
-            <h2 style="margin-top: 0; margin-bottom: 16px; font-size: 20px; font-weight: 600;">Live Chat Threads</h2>
-            <div style="display: flex; flex-direction: column; gap: 12px; max-height: 550px; overflow-y: auto;">
-                @forelse ($conversations as $conv)
-                    <a href="{{ route('admin.support', ['user_id' => $conv['user']->id]) }}" 
-                       style="padding: 16px; border-radius: 12px; text-decoration: none; display: flex; gap: 12px; {{ ($selectedUser && $selectedUser->id === $conv['user']->id) ? 'background: #e8f0fe; border: 1px solid #c7d2fe;' : 'background: #f8fafc; border: 1px solid transparent;' }}"
-                    >
-                        @php
-                            $initials = strtoupper(substr($conv['user']->name, 0, 2));
-                        @endphp
-                        <div style="width: 48px; height: 48px; border-radius: 50%; background: #1e293b; color: white; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 16px; flex-shrink: 0;">
-                            {{ $initials }}
-                        </div>
-                        <div style="flex: 1; min-width: 0;">
-                            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px;">
-                                <div style="font-weight: 600; color: #1e293b; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-                                    {{ $conv['user']->name }}
-                                </div>
-                                @if($conv['last_message_time'])
-                                    <span style="font-size: 12px; color: #64748b; flex-shrink: 0;">
-                                        {{ $conv['last_message_time']->diffForHumans() }}
-                                    </span>
-                                @endif
-                            </div>
-                            <div style="font-size: 13px; color: #475569; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-                                {{ $conv['user']->email }}
-                            </div>
-                            @if($conv['last_message'])
-                                <div style="font-size: 13px; color: #64748b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                                    {{ \Illuminate\Support\Str::limit($conv['last_message']->body, 60) }}
-                                </div>
-                            @endif
-                        </div>
-                    </a>
-                @empty
-                    <div style="padding: 48px; text-align: center; color: #64748b;">
-                        No conversations yet.
+<span style="position:absolute;left:-9999px;">Support Messages</span>
+<div class="support-shell">
+    <aside class="thread-panel">
+        <h2 class="thread-title">Live Chat Threads</h2>
+        <div class="thread-list">
+            @forelse ($conversations as $conv)
+                @php
+                    $user = $conv['user'];
+                    $phoneNumber = $conv['phone_number'];
+                    $active = $selectedUser && $user && $selectedUser->id === $user->id && $selectedPhoneNumber === $phoneNumber;
+                    $deviceLabel = $conv['device']->name ?? null;
+                @endphp
+                <a class="thread-item {{ $active ? 'active' : '' }}"
+                   href="{{ route('admin.support', ['user_id' => $user?->id, 'phone_number' => $phoneNumber]) }}">
+                    <div class="thread-top">
+                        <span class="thread-name">{{ $user?->name ?? $phoneNumber }}</span>
+                        @if($conv['last_message_time'])
+                            <span class="thread-time">{{ $conv['last_message_time']->diffForHumans() }}</span>
+                        @endif
                     </div>
+                    <div class="thread-email">{{ $user?->email ?? ($deviceLabel ?: $phoneNumber) }}</div>
+                    @if($conv['last_message'])
+                        <div class="thread-preview">{{ \Illuminate\Support\Str::limit($conv['last_message']->body, 70) }}</div>
+                    @endif
+                </a>
+            @empty
+                <p class="muted" style="padding: 24px 8px;">No live chat threads yet.</p>
+            @endforelse
+        </div>
+    </aside>
+
+    <section class="chat-panel">
+        @if($selectedUser && $selectedPhoneNumber)
+            <div class="chat-head">
+                <div class="chat-name">{{ $selectedUser->name }}</div>
+                <div class="chat-email">{{ $selectedUser->email }}</div>
+            </div>
+
+            <div class="chat-messages">
+                @php($chatMessages = $messages instanceof \Illuminate\Pagination\AbstractPaginator ? $messages->getCollection()->reverse() : $messages->reverse())
+                @forelse ($chatMessages as $message)
+                    @php($isAdmin = $message->sender_phone_number === '0000000000')
+                    <div class="bubble-row {{ $isAdmin ? 'admin' : '' }}">
+                        <div class="bubble {{ $isAdmin ? 'admin' : '' }}">
+                            <span class="bubble-author">{{ $isAdmin ? 'Support' : $selectedUser->name }}</span>
+                            <div class="bubble-body">{{ $message->body }}</div>
+                            <span class="bubble-time">{{ $message->created_at?->format('d M Y, H:i') }}</span>
+                        </div>
+                    </div>
+                @empty
+                    <p class="muted" style="padding: 40px 0;">No messages yet.</p>
                 @endforelse
             </div>
-        </div>
-    </div>
 
-    <div style="flex: 1;">
-        <div class="card" style="height: 100%; display: flex; flex-direction: column;">
-            @if($selectedUser)
-                <div style="border-bottom: 1px solid #e2e8f0; padding-bottom: 16px; margin-bottom: 16px; display: flex; align-items: center; gap: 12px;">
-                    @php
-                        $userInitials = strtoupper(substr($selectedUser->name, 0, 2));
-                    @endphp
-                    <div style="width: 48px; height: 48px; border-radius: 50%; background: #1e293b; color: white; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 16px;">
-                        {{ $userInitials }}
-                    </div>
-                    <div>
-                        <h2 style="margin: 0; font-size: 20px; font-weight: 600;">{{ $selectedUser->name }}</h2>
-                        <p style="margin: 4px 0 0 0; color: #475569; font-size: 14px;">{{ $selectedUser->email }}</p>
-                    </div>
-                </div>
-
-                <div style="flex: 1; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; padding-right: 8px;">
-                    @forelse ($messages as $message)
-                        <div style="display: flex; gap: 10px; align-items: flex-end; {{ $message->sender_phone_number === '0000000000' ? 'flex-direction: row-reverse;' : '' }}">
-                            @if($message->sender_phone_number === '0000000000')
-                                <div style="width: 36px; height: 36px; border-radius: 50%; background: #155eef; color: white; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; flex-shrink: 0;">
-                                    A
-                                </div>
-                            @else
-                                <div style="width: 36px; height: 36px; border-radius: 50%; background: #1e293b; color: white; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; flex-shrink: 0;">
-                                    {{ $userInitials }}
-                                </div>
-                            @endif
-                            <div style="display: flex; flex-direction: column; gap: 4px; max-width: 70%;">
-                                <div style="padding: 12px 16px; border-radius: 16px; {{ $message->sender_phone_number === '0000000000' ? 'background: #1e293b; color: white; border-bottom-right-radius: 4px;' : 'background: #f1f5f9; color: #1e293b; border-bottom-left-radius: 4px;' }}">
-                                    <div style="white-space: pre-wrap; word-wrap: break-word;">{{ $message->body }}</div>
-                                </div>
-                                <div style="font-size: 11px; color: #94a3b8;">
-                                    {{ $message->created_at->format('j M Y, H:i') }}
-                                </div>
-                            </div>
-                        </div>
-                    @empty
-                        <div style="padding: 48px; text-align: center; color: #64748b;">
-                            No messages yet.
-                        </div>
-                    @endforelse
-                </div>
-
-                <div style="border-top: 1px solid #e2e8f0; padding-top: 16px; margin-top: 16px;">
-                    <form class="inline-form" method="POST" action="{{ route('admin.support.reply') }}">
-                        @csrf
-                        <input type="hidden" name="recipient_phone_number" value="{{ $selectedUser->phone_number }}">
-                        <div style="margin-bottom: 12px;">
-                            <textarea name="body" required style="width: 100%; padding: 16px; border: 1px solid #cbd5e1; border-radius: 12px; min-height: 100px; font-size: 14px; resize: vertical;" placeholder="Type your reply..."></textarea>
-                        </div>
-                        <div style="display: flex; justify-content: flex-end;">
-                            <button class="btn btn-primary" type="submit" style="background: #1e293b; border-radius: 12px; padding: 10px 24px; font-weight: 600;">Send Reply</button>
-                        </div>
-                    </form>
-                </div>
-            @else
-                <div style="flex: 1; display: flex; align-items: center; justify-content: center;">
-                    <div style="text-align: center; color: #64748b;">
-                        <h3 style="font-size: 18px; font-weight: 600; margin-bottom: 8px;">Select a Conversation</h3>
-                        <p style="font-size: 14px;">Choose a chat thread from the left sidebar to view and reply to messages.</p>
-                    </div>
-                </div>
-            @endif
-        </div>
-    </div>
+            <form class="reply-form" method="POST" action="{{ route('admin.support.reply') }}">
+                @csrf
+                <input type="hidden" name="recipient_phone_number" value="{{ $selectedPhoneNumber }}">
+                <textarea name="body" required placeholder="Type your reply..."></textarea>
+                <button class="btn btn-primary" type="submit">Send Reply</button>
+            </form>
+        @else
+            <div style="height: 100%; display: grid; place-items: center; color: #4056a6;">
+                Select a live chat thread to reply.
+            </div>
+        @endif
+    </section>
 </div>
 @endsection

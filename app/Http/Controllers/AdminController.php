@@ -230,6 +230,7 @@ class AdminController extends Controller
         $supportPhoneNumber = '0000000000';
         $selectedUserId = $request->query('user_id');
         $selectedUser = null;
+        $selectedPhoneNumber = null;
         $messages = collect();
         $conversations = collect();
 
@@ -249,17 +250,30 @@ class AdminController extends Controller
             })->unique();
 
             $users = \App\Models\User::whereIn('phone_number', $userPhoneNumbers)->get();
+            $devices = Schema::hasTable('devices')
+                ? DB::table('devices')->whereIn('phone_number', $userPhoneNumbers)->get()
+                : collect();
+            $deviceUserIds = $devices->pluck('user_id')->filter()->unique()->values();
+            $deviceUsers = $deviceUserIds->isNotEmpty()
+                ? \App\Models\User::whereIn('id', $deviceUserIds)->get()
+                : collect();
 
-            $conversations = $userPhoneNumbers->map(function ($phoneNumber) use ($allMessages, $supportPhoneNumber, $users) {
+            $conversations = $userPhoneNumbers->map(function ($phoneNumber) use ($allMessages, $supportPhoneNumber, $users, $devices, $deviceUsers) {
                 $userMsgs = $allMessages->filter(function ($msg) use ($phoneNumber, $supportPhoneNumber) {
                     return ($msg->sender_phone_number === $supportPhoneNumber && $msg->recipient_phone_number === $phoneNumber) ||
                            ($msg->sender_phone_number === $phoneNumber && $msg->recipient_phone_number === $supportPhoneNumber);
                 });
                 $lastMsg = $userMsgs->first();
                 $user = $users->where('phone_number', $phoneNumber)->first();
+                $device = $devices->where('phone_number', $phoneNumber)->first();
+                if (! $user && $device) {
+                    $user = $deviceUsers->where('id', $device->user_id)->first();
+                }
+
                 return [
                     'phone_number' => $phoneNumber,
                     'user' => $user,
+                    'device' => $device,
                     'last_message' => $lastMsg,
                     'last_message_time' => $lastMsg ? $lastMsg->created_at : null,
                     'message_count' => $userMsgs->count(),
@@ -269,15 +283,16 @@ class AdminController extends Controller
             })->sortByDesc('last_message_time')->values();
 
             if ($selectedUserId) {
-                $selectedUser = $users->find($selectedUserId);
+                $selectedUser = $users->find($selectedUserId) ?: $deviceUsers->find($selectedUserId);
                 if ($selectedUser) {
+                    $selectedPhoneNumber = $request->query('phone_number') ?: $selectedUser->phone_number;
                     $messages = \App\Models\Message::query()
-                        ->where(function ($q) use ($supportPhoneNumber, $selectedUser) {
-                            $q->where(function ($q2) use ($supportPhoneNumber, $selectedUser) {
+                        ->where(function ($q) use ($supportPhoneNumber, $selectedPhoneNumber) {
+                            $q->where(function ($q2) use ($supportPhoneNumber, $selectedPhoneNumber) {
                                 $q2->where('sender_phone_number', $supportPhoneNumber)
-                                   ->where('recipient_phone_number', $selectedUser->phone_number);
-                            })->orWhere(function ($q2) use ($supportPhoneNumber, $selectedUser) {
-                                $q2->where('sender_phone_number', $selectedUser->phone_number)
+                                   ->where('recipient_phone_number', $selectedPhoneNumber);
+                            })->orWhere(function ($q2) use ($supportPhoneNumber, $selectedPhoneNumber) {
+                                $q2->where('sender_phone_number', $selectedPhoneNumber)
                                    ->where('recipient_phone_number', $supportPhoneNumber);
                             });
                         })
@@ -287,13 +302,14 @@ class AdminController extends Controller
             } elseif ($conversations->isNotEmpty()) {
                 $firstConv = $conversations->first();
                 $selectedUser = $firstConv['user'];
+                $selectedPhoneNumber = $firstConv['phone_number'];
                 $messages = \App\Models\Message::query()
-                    ->where(function ($q) use ($supportPhoneNumber, $selectedUser) {
-                        $q->where(function ($q2) use ($supportPhoneNumber, $selectedUser) {
+                    ->where(function ($q) use ($supportPhoneNumber, $selectedPhoneNumber) {
+                        $q->where(function ($q2) use ($supportPhoneNumber, $selectedPhoneNumber) {
                             $q2->where('sender_phone_number', $supportPhoneNumber)
-                               ->where('recipient_phone_number', $selectedUser->phone_number);
-                        })->orWhere(function ($q2) use ($supportPhoneNumber, $selectedUser) {
-                            $q2->where('sender_phone_number', $selectedUser->phone_number)
+                               ->where('recipient_phone_number', $selectedPhoneNumber);
+                        })->orWhere(function ($q2) use ($supportPhoneNumber, $selectedPhoneNumber) {
+                            $q2->where('sender_phone_number', $selectedPhoneNumber)
                                ->where('recipient_phone_number', $supportPhoneNumber);
                         });
                     })
@@ -315,6 +331,7 @@ class AdminController extends Controller
             'messages' => $messages,
             'conversations' => $conversations,
             'selectedUser' => $selectedUser,
+            'selectedPhoneNumber' => $selectedPhoneNumber,
         ]);
     }
 
@@ -475,7 +492,7 @@ class AdminController extends Controller
         ]);
 
         $supportPhoneNumber = '0000000000';
-        $normalizedRecipient = preg_replace('/\D+/g', '', $validated['recipient_phone_number']) ?? '';
+        $normalizedRecipient = preg_replace('/\D+/', '', $validated['recipient_phone_number']) ?? '';
 
         if (! Schema::hasTable('messages')) {
             return redirect()->route('admin.support')
@@ -491,10 +508,8 @@ class AdminController extends Controller
             'body' => trim($validated['body']),
         ]);
 
-        app(\App\Services\ExpoPushService::class)->sendMessageNotification(
+        app(\App\Services\ExpoPushService::class)->sendSupportNotification(
             $normalizedRecipient,
-            $supportPhoneNumber,
-            'Support',
             (string) trim($validated['body'])
         );
 

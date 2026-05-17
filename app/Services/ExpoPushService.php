@@ -23,6 +23,8 @@ class ExpoPushService
             'priority' => 'high',
             'channelId' => 'incoming-calls',
             'categoryId' => 'cloudos_call',
+            'ttl' => 60,
+            'interruptionLevel' => 'time-sensitive',
             'data' => [
                 'kind' => 'call',
                 'callerPhoneNumber' => $callerPhoneNumber,
@@ -45,9 +47,35 @@ class ExpoPushService
             'priority' => 'high',
             'channelId' => 'messages',
             'categoryId' => 'cloudos_message',
+            'ttl' => 2419200,
+            'interruptionLevel' => 'time-sensitive',
             'data' => [
                 'kind' => 'message',
                 'senderPhoneNumber' => $senderPhoneNumber,
+            ],
+        ]);
+    }
+
+    public function sendSupportNotification(string $receiverPhoneNumber, string $body): void
+    {
+        $preview = trim($body);
+        if (mb_strlen($preview) > 120) {
+            $preview = mb_substr($preview, 0, 117) . '...';
+        }
+
+        $this->sendToPhoneNumber($receiverPhoneNumber, [
+            'title' => 'Cloud OS Support',
+            'body' => $preview !== '' ? $preview : 'Support replied to your live chat.',
+            'sound' => 'default',
+            'priority' => 'high',
+            'channelId' => 'support-chat',
+            'categoryId' => 'cloudos_support',
+            'ttl' => 2419200,
+            'interruptionLevel' => 'time-sensitive',
+            'data' => [
+                'kind' => 'support_message',
+                'senderPhoneNumber' => '0000000000',
+                'recipientPhoneNumber' => $receiverPhoneNumber,
             ],
         ]);
     }
@@ -79,8 +107,13 @@ class ExpoPushService
                     'body' => $message,
                     'sound' => 'default',
                     'priority' => 'high',
+                    'channelId' => 'app-updates',
+                    'categoryId' => 'cloudos_update',
+                    'ttl' => 2419200,
+                    'interruptionLevel' => 'time-sensitive',
                     'data' => [
                         'kind' => 'app_update',
+                        'title' => $title,
                     ],
                 ])
                 ->values()
