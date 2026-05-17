@@ -9,17 +9,21 @@
         display: grid;
         grid-template-columns: 320px minmax(0, 1fr);
         gap: 16px;
-        min-height: calc(100vh - 128px);
+        height: calc(100vh - 128px);
+        min-height: 0;
     }
     .thread-panel,
     .chat-panel {
         background: #ffffff;
         border: 1px solid #cbd8f6;
         border-radius: 12px;
+        min-height: 0;
     }
     .thread-panel {
         padding: 16px 14px;
         overflow: hidden;
+        display: flex;
+        flex-direction: column;
     }
     .thread-title {
         font-size: 18px;
@@ -30,7 +34,8 @@
     .thread-list {
         display: grid;
         gap: 10px;
-        max-height: calc(100vh - 190px);
+        flex: 1;
+        min-height: 0;
         overflow-y: auto;
     }
     .thread-item {
@@ -82,6 +87,7 @@
         display: flex;
         flex-direction: column;
         min-width: 0;
+        overflow: hidden;
     }
     .chat-head {
         border-bottom: 1px solid #cbd8f6;
@@ -99,9 +105,10 @@
         font-size: 15px;
     }
     .chat-messages {
-        flex: 1;
-        min-height: 300px;
+        flex: 1 1 auto;
+        min-height: 0;
         overflow-y: auto;
+        overscroll-behavior: contain;
         padding-right: 4px;
     }
     .bubble-row {
