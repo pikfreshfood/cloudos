@@ -222,6 +222,7 @@ class FileUploadController extends Controller
         $validated = $request->validate([
             'user_id' => ['required', 'string', 'max:255'],
             'device_id' => ['required', 'string', 'max:255'],
+            'folder_path' => ['nullable', 'string', 'max:500'],
             'folders' => ['nullable', 'array'],
             'folders.*' => ['required', 'string', 'max:500'],
         ]);
@@ -242,10 +243,19 @@ class FileUploadController extends Controller
             'Telegram',
         ];
 
-        $foldersToCreate = $validated['folders'] ?? $defaultFolders;
+        $foldersToCreate = $validated['folders']
+            ?? (! empty($validated['folder_path'])
+                ? [$this->sanitizeFolderPath($validated['folder_path'])]
+                : $defaultFolders);
         $createdFolders = [];
 
         foreach ($foldersToCreate as $folderPath) {
+            $folderPath = $this->sanitizeFolderPath($folderPath);
+
+            if ($folderPath === '') {
+                continue;
+            }
+
             $fullPath = trim("{$deviceBasePath}/{$folderPath}", '/');
             if (! $disk->exists($fullPath)) {
                 $this->ensureLocalStoragePath($fullPath);
