@@ -163,6 +163,16 @@
         background: #10245d;
         border-radius: 10px;
     }
+    .reply-status {
+        color: #4056a6;
+        font-size: 13px;
+        margin-top: 8px;
+        min-height: 18px;
+    }
+    .reply-status.error {
+        color: #c2413b;
+        font-weight: 700;
+    }
     @media (max-width: 900px) {
         .support-shell {
             grid-template-columns: 1fr;
@@ -213,7 +223,7 @@
                 <div class="chat-email">{{ $selectedUser->email }}</div>
             </div>
 
-            <div class="chat-messages">
+            <div class="chat-messages" id="supportChatMessages">
                 @php($chatMessages = $messages instanceof \Illuminate\Pagination\AbstractPaginator ? $messages->getCollection()->reverse() : $messages->reverse())
                 @forelse ($chatMessages as $message)
                     @php($isAdmin = $message->sender_phone_number === '0000000000')
@@ -229,11 +239,12 @@
                 @endforelse
             </div>
 
-            <form class="reply-form" method="POST" action="{{ route('admin.support.reply') }}">
+            <form class="reply-form" id="supportReplyForm" method="POST" action="{{ route('admin.support.reply') }}">
                 @csrf
                 <input type="hidden" name="recipient_phone_number" value="{{ $selectedPhoneNumber }}">
-                <textarea name="body" required placeholder="Type your reply..."></textarea>
+                <textarea name="body" required placeholder="Type your reply..." id="supportReplyBody"></textarea>
                 <button class="btn btn-primary" type="submit">Send Reply</button>
+                <div class="reply-status" id="supportReplyStatus" aria-live="polite"></div>
             </form>
         @else
             <div style="height: 100%; display: grid; place-items: center; color: #4056a6;">
@@ -243,3 +254,91 @@
     </section>
 </div>
 @endsection
+
+@push('scripts')
+<script>
+    (() => {
+        const form = document.getElementById('supportReplyForm');
+        const messages = document.getElementById('supportChatMessages');
+        const body = document.getElementById('supportReplyBody');
+        const status = document.getElementById('supportReplyStatus');
+
+        if (!form || !messages || !body) {
+            return;
+        }
+
+        const scrollToBottom = () => {
+            messages.scrollTop = messages.scrollHeight;
+        };
+
+        const appendAdminMessage = (message) => {
+            messages.querySelector('.muted')?.remove();
+
+            const row = document.createElement('div');
+            row.className = 'bubble-row admin';
+
+            const bubble = document.createElement('div');
+            bubble.className = 'bubble admin';
+
+            const author = document.createElement('span');
+            author.className = 'bubble-author';
+            author.textContent = 'Support';
+
+            const messageBody = document.createElement('div');
+            messageBody.className = 'bubble-body';
+            messageBody.textContent = message.body || '';
+
+            const time = document.createElement('span');
+            time.className = 'bubble-time';
+            time.textContent = message.created_at_display || new Date().toLocaleString();
+
+            bubble.append(author, messageBody, time);
+            row.appendChild(bubble);
+            messages.appendChild(row);
+            scrollToBottom();
+        };
+
+        scrollToBottom();
+
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+
+            const submit = form.querySelector('button[type="submit"]');
+            const formData = new FormData(form);
+
+            if (!String(formData.get('body') || '').trim()) {
+                return;
+            }
+
+            status.textContent = 'Sending...';
+            status.classList.remove('error');
+            submit.disabled = true;
+
+            try {
+                const response = await fetch(form.action, {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest',
+                    },
+                    body: formData,
+                });
+                const payload = await response.json().catch(() => ({}));
+
+                if (!response.ok) {
+                    throw new Error(payload.message || 'Could not send reply.');
+                }
+
+                appendAdminMessage(payload.data || {});
+                body.value = '';
+                status.textContent = 'Reply sent.';
+            } catch (error) {
+                status.textContent = error.message || 'Could not send reply.';
+                status.classList.add('error');
+            } finally {
+                submit.disabled = false;
+            }
+        });
+    })();
+</script>
+@endpush

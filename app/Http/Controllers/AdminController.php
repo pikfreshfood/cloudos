@@ -7,6 +7,7 @@ use App\Models\DeveloperApp;
 use App\Models\DeveloperProfile;
 use App\Models\SupportMessage;
 use App\Models\User;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -481,9 +482,13 @@ class AdminController extends Controller
             ->with('status', 'Support message status updated.');
     }
 
-    public function sendSupportReply(Request $request): RedirectResponse
+    public function sendSupportReply(Request $request): RedirectResponse|JsonResponse
     {
         if (! $this->isLoggedIn($request)) {
+            if ($request->expectsJson()) {
+                return response()->json(['message' => 'Unauthenticated.'], 401);
+            }
+
             return redirect()->route('admin.login');
         }
 
@@ -496,12 +501,26 @@ class AdminController extends Controller
         $normalizedRecipient = preg_replace('/\D+/', '', $validated['recipient_phone_number']) ?? '';
 
         if (! Schema::hasTable('messages')) {
+            if ($request->expectsJson()) {
+                return response()->json(['message' => 'Messages table not ready.'], 503);
+            }
+
             return redirect()->route('admin.support')
                 ->with('error', 'Messages table not ready.');
         }
 
-        \App\Models\Message::create([
-            'sender_user_id' => null,
+        $senderUserId = $this->supportReplySenderUserId($normalizedRecipient);
+        if (! $senderUserId) {
+            if ($request->expectsJson()) {
+                return response()->json(['message' => 'No user found for this support thread.'], 422);
+            }
+
+            return redirect()->route('admin.support')
+                ->withErrors(['body' => 'No user found for this support thread.']);
+        }
+
+        $message = \App\Models\Message::create([
+            'sender_user_id' => $senderUserId,
             'sender_name' => 'Support',
             'sender_phone_number' => $supportPhoneNumber,
             'recipient_phone_number' => $normalizedRecipient,
@@ -513,6 +532,21 @@ class AdminController extends Controller
             $normalizedRecipient,
             (string) trim($validated['body'])
         );
+
+        if ($request->expectsJson()) {
+            return response()->json([
+                'message' => 'Reply sent successfully.',
+                'data' => [
+                    'id' => (string) $message->id,
+                    'body' => $message->body,
+                    'sender_name' => $message->sender_name,
+                    'sender_phone_number' => $message->sender_phone_number,
+                    'recipient_phone_number' => $message->recipient_phone_number,
+                    'created_at' => optional($message->created_at)?->toISOString(),
+                    'created_at_display' => optional($message->created_at)?->format('d M Y, H:i'),
+                ],
+            ], 201);
+        }
 
         return redirect()->route('admin.support')
             ->with('status', 'Reply sent successfully.');
@@ -635,6 +669,35 @@ class AdminController extends Controller
             'support_admin' => 'Support Admin',
             'viewer' => 'Viewer',
         ];
+    }
+
+    private function supportReplySenderUserId(string $recipientPhoneNumber): ?int
+    {
+        $recipientPhoneNumber = $this->normalizePhoneNumber($recipientPhoneNumber);
+
+        if (! $recipientPhoneNumber) {
+            return null;
+        }
+
+        $userId = User::query()
+            ->where('phone_number', $recipientPhoneNumber)
+            ->value('id');
+
+        if ($userId) {
+            return (int) $userId;
+        }
+
+        if (Schema::hasTable('devices')) {
+            $deviceUserId = DB::table('devices')
+                ->where('phone_number', $recipientPhoneNumber)
+                ->value('user_id');
+
+            if ($deviceUserId) {
+                return (int) $deviceUserId;
+            }
+        }
+
+        return User::query()->value('id') ? (int) User::query()->value('id') : null;
     }
 
     private function normalizePhoneNumber(?string $phoneNumber): ?string

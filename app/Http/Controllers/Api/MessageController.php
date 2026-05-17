@@ -70,18 +70,31 @@ class MessageController extends Controller
 
     public function unreadCount(Request $request): JsonResponse
     {
-        $validated = $this->validatePhoneScopedRequest($request, 'phone_number');
+        $validated = $request->validate([
+            'user_id' => ['required', 'integer', 'exists:users,id'],
+            'phone_number' => ['required', 'regex:/^\d{3,20}$/'],
+            'peer_phone_number' => ['nullable', 'regex:/^\d{3,20}$/'],
+        ]);
+        $phoneNumber = $this->normalizePhoneNumber($validated['phone_number']);
+        $peerPhoneNumber = isset($validated['peer_phone_number'])
+            ? $this->normalizePhoneNumber($validated['peer_phone_number'])
+            : null;
 
         if (! $this->ensureMessagesTableIsReady()) {
             return response()->json(['unread_count' => 0]);
         }
 
         try {
-            $count = Message::query()
+            $query = Message::query()
                 ->where('type', 'normal')
-                ->where('recipient_phone_number', $validated['phone_number'])
-                ->whereNull('read_at')
-                ->count();
+                ->where('recipient_phone_number', $phoneNumber)
+                ->whereNull('read_at');
+
+            if ($peerPhoneNumber) {
+                $query->where('sender_phone_number', $peerPhoneNumber);
+            }
+
+            $count = $query->count();
         } catch (Throwable) {
             $count = 0;
         }
