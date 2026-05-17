@@ -155,14 +155,18 @@ class MessageController extends Controller
             'recipient_phone_number' => ['required', 'regex:/^\d{3,20}$/'],
             'body' => ['nullable', 'string', 'max:5000'],
             'attachment' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp,gif', 'max:5120'],
+            'attachment_base64' => ['nullable', 'string'],
+            'attachment_name' => ['nullable', 'string', 'max:255'],
+            'attachment_mime' => ['nullable', 'string', 'max:100'],
         ]);
 
         $validated['sender_phone_number'] = $this->normalizePhoneNumber($validated['sender_phone_number']);
         $validated['recipient_phone_number'] = $this->normalizePhoneNumber($validated['recipient_phone_number']);
         $body = trim((string) ($validated['body'] ?? ''));
         $attachment = $request->file('attachment');
+        $attachmentBase64 = trim((string) ($validated['attachment_base64'] ?? ''));
 
-        if ($body === '' && ! $attachment) {
+        if ($body === '' && ! $attachment && $attachmentBase64 === '') {
             return response()->json([
                 'message' => 'Message body or image attachment is required.',
             ], 422);
@@ -191,7 +195,13 @@ class MessageController extends Controller
             }
         }
 
-        $attachmentData = $this->storeMessageAttachment($attachment);
+        $attachmentData = $attachment
+            ? $this->storeMessageAttachment($attachment)
+            : $this->storeMessageAttachmentFromBase64(
+                $attachmentBase64,
+                $validated['attachment_name'] ?? null,
+                $validated['attachment_mime'] ?? null
+            );
 
         $message = Message::query()->create([
             'sender_user_id' => $sender->id,
@@ -455,6 +465,48 @@ class MessageController extends Controller
             'attachment_path' => $path,
             'attachment_name' => $attachment->getClientOriginalName() ?: $filename,
             'attachment_mime' => $attachment->getClientMimeType(),
+        ];
+    }
+
+    private function storeMessageAttachmentFromBase64(string $base64, ?string $name, ?string $mimeType): array
+    {
+        if ($base64 === '') {
+            return [];
+        }
+
+        if (str_contains($base64, ',')) {
+            $base64 = substr($base64, strpos($base64, ',') + 1);
+        }
+
+        $binary = base64_decode($base64, true);
+        if ($binary === false || $binary === '') {
+            abort(response()->json(['message' => 'Invalid image attachment.'], 422));
+        }
+
+        $detectedMime = (new \finfo(FILEINFO_MIME_TYPE))->buffer($binary) ?: ($mimeType ?: 'image/jpeg');
+        $allowed = [
+            'image/jpeg' => 'jpg',
+            'image/png' => 'png',
+            'image/webp' => 'webp',
+            'image/gif' => 'gif',
+        ];
+
+        if (! isset($allowed[$detectedMime])) {
+            abort(response()->json(['message' => 'Only JPG, PNG, WEBP, and GIF images can be attached.'], 422));
+        }
+
+        if (strlen($binary) > 5 * 1024 * 1024) {
+            abort(response()->json(['message' => 'Image attachment must be 5MB or smaller.'], 422));
+        }
+
+        $filename = now()->format('YmdHis') . '-' . bin2hex(random_bytes(8)) . '.' . $allowed[$detectedMime];
+        $path = 'message-attachments/' . $filename;
+        \Illuminate\Support\Facades\Storage::disk('public')->put($path, $binary);
+
+        return [
+            'attachment_path' => $path,
+            'attachment_name' => $name ?: $filename,
+            'attachment_mime' => $detectedMime,
         ];
     }
 
