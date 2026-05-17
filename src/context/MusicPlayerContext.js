@@ -1,4 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { AppState } from 'react-native';
 import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useOS } from './OSContext';
@@ -8,6 +9,7 @@ import { API_URL, mediaService } from '../services/api';
 const MusicPlayerContext = createContext();
 const MUSIC_STATE_FILE_NAME = 'music_player_state.json';
 const POSITION_PERSIST_GRANULARITY_MS = 2000;
+const MUSIC_MEDIA_TYPE = 'music';
 
 const createDefaultState = () => ({
   tracks: [],
@@ -30,6 +32,7 @@ export const MusicPlayerProvider = ({ children }) => {
   const subscriptionsRef = useRef({});
   const statesRef = useRef({});
   const hydratedDevicesRef = useRef({});
+  const persistRemoteMusicStateRef = useRef(async () => {});
 
   const configureAudioMode = useCallback(async (staysActiveInBackground = true) => {
     await setAudioModeAsync({
@@ -341,6 +344,12 @@ export const MusicPlayerProvider = ({ children }) => {
   const stopDevicePlayback = useCallback(async (deviceId = currentDeviceId) => {
     if (!deviceId) return;
 
+    try {
+      await persistRemoteMusicStateRef.current(deviceId, { playbackStatus: 'paused' });
+    } catch (error) {
+      console.error('Failed to sync playback state during shutdown:', error);
+    }
+
     const currentPlayer = playersRef.current[deviceId];
     subscriptionsRef.current[deviceId]?.remove?.();
     delete subscriptionsRef.current[deviceId];
@@ -393,6 +402,28 @@ export const MusicPlayerProvider = ({ children }) => {
           }
         } catch (error) {
           console.error('Failed to load saved music state:', error);
+        }
+      }
+
+      if (currentUser?.id) {
+        try {
+          const response = await mediaService.listStates({
+            userId: currentUser.id,
+            mediaType: MUSIC_MEDIA_TYPE,
+          });
+          const latestRemoteState = response.media_states?.[0];
+          if (latestRemoteState?.media_path) {
+            persistedState = {
+              lastTrackId: latestRemoteState.metadata?.lastTrackId || latestRemoteState.media_path,
+              position: Number(latestRemoteState.position_ms) || 0,
+              volume: typeof latestRemoteState.metadata?.volume === 'number' ? latestRemoteState.metadata.volume : persistedState?.volume,
+              isMuted: typeof latestRemoteState.metadata?.isMuted === 'boolean' ? latestRemoteState.metadata.isMuted : persistedState?.isMuted,
+              repeatMode: latestRemoteState.metadata?.repeatMode === 'one' ? 'one' : 'all',
+              wasPlaying: latestRemoteState.playback_status === 'playing',
+            };
+          }
+        } catch (error) {
+          console.log('Failed to load remote music playback state:', error?.response?.data?.message || error?.message || error);
         }
       }
 
@@ -459,7 +490,7 @@ export const MusicPlayerProvider = ({ children }) => {
     return () => {
       cancelled = true;
     };
-  }, [currentDeviceId, getDeviceState, getMusicStatePath, loadTrackIntoDevice, refreshTracks, setPlaybackStatusUpdate, updateDeviceState]);
+  }, [currentDeviceId, currentUser?.id, getDeviceState, getMusicStatePath, loadTrackIntoDevice, refreshTracks, setPlaybackStatusUpdate, updateDeviceState]);
 
   useEffect(() => {
     const pauseOtherDevices = async () => {
@@ -499,6 +530,40 @@ export const MusicPlayerProvider = ({ children }) => {
   const currentTrack = currentState.currentTrackIndex >= 0
     ? currentState.tracks[currentState.currentTrackIndex]
     : null;
+
+  const persistRemoteMusicState = useCallback(async (deviceId = currentDeviceId, options = {}) => {
+    if (!currentUser?.id || !deviceId) return;
+
+    const targetState = getDeviceState(deviceId);
+    const targetTrack = targetState.currentTrackIndex >= 0
+      ? targetState.tracks[targetState.currentTrackIndex]
+      : null;
+    const mediaPath = targetTrack?.path || targetTrack?.id;
+
+    if (!mediaPath) return;
+
+    await mediaService.saveState({
+      userId: currentUser.id,
+      deviceId,
+      mediaType: MUSIC_MEDIA_TYPE,
+      mediaPath,
+      mediaTitle: targetTrack?.title || 'Music',
+      positionMs: targetState.position,
+      durationMs: targetState.duration,
+      playbackStatus: options.playbackStatus || (targetState.isPlaying ? 'playing' : 'paused'),
+      metadata: {
+        lastTrackId: targetTrack?.id || targetState.lastTrackId || mediaPath,
+        volume: targetState.volume,
+        isMuted: targetState.isMuted,
+        repeatMode: targetState.repeatMode,
+      },
+    });
+  }, [currentDeviceId, currentUser?.id, getDeviceState]);
+
+  useEffect(() => {
+    persistRemoteMusicStateRef.current = persistRemoteMusicState;
+  }, [persistRemoteMusicState]);
+
   const persistedPositionBucket = currentState.currentTrackIndex >= 0
     ? Math.floor(currentState.position / POSITION_PERSIST_GRANULARITY_MS) * POSITION_PERSIST_GRANULARITY_MS
     : 0;
@@ -524,6 +589,7 @@ export const MusicPlayerProvider = ({ children }) => {
       try {
         if (!isCancelled) {
           await FileSystem.writeAsStringAsync(musicStatePath, JSON.stringify(payload));
+          await persistRemoteMusicState(currentDeviceId);
         }
       } catch (error) {
         console.error('Failed to save music player state:', error);
@@ -548,8 +614,21 @@ export const MusicPlayerProvider = ({ children }) => {
     currentState.volume,
     currentTrack?.id,
     getMusicStatePath,
+    persistRemoteMusicState,
     persistedPositionBucket,
   ]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState !== 'active') {
+        persistRemoteMusicState(currentDeviceId).catch((error) => {
+          console.log('Failed to sync playback state before app background:', error?.message || error);
+        });
+      }
+    });
+
+    return () => subscription.remove();
+  }, [currentDeviceId, persistRemoteMusicState]);
 
   const value = useMemo(() => ({
     tracks: currentState.tracks,

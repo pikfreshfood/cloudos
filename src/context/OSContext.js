@@ -17,6 +17,16 @@ export const OSProvider = ({ children }) => {
     return `${FileSystem.documentDirectory}users/${currentUser.id}/devices/${device.id}/`;
   };
 
+  const getStorageRoot = () => {
+    if (Platform.OS === 'ios') {
+      return FileSystem.documentDirectory || '';
+    }
+    if (Platform.OS === 'android') {
+      return FileSystem.documentDirectory || '';
+    }
+    return '';
+  };
+
   const ensureDeviceFolders = async (device) => {
     const deviceRoot = getDeviceStorageDir(device);
     if (!deviceRoot) return '';
@@ -99,6 +109,7 @@ export const OSProvider = ({ children }) => {
         osType,
         setOsType,
         getStorageDir,
+        getStorageRoot,
         currentDevice,
         currentDeviceId,
         selectDevice,

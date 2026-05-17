@@ -18,7 +18,7 @@
         "NSCameraUsageDescription": "Allow Cloud OS to use your camera for video calls and camera features.",
         "NSMicrophoneUsageDescription": "Allow Cloud OS to use your microphone for voice and video calls.",
         "UIBackgroundModes": [
-          "remote-notification",
+          "fetch",
           "remote-notification"
         ]
       },
@@ -46,20 +46,11 @@
         "android.permission.SYSTEM_ALERT_WINDOW",
         "android.permission.WAKE_LOCK",
         "android.permission.BLUETOOTH",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
         "android.permission.REQUEST_INSTALL_PACKAGES",
-        "android.permission.CALL_PHONE",
-        "android.permission.CAMERA",
-        "android.permission.RECORD_AUDIO",
-        "android.permission.ACCESS_NETWORK_STATE",
-        "android.permission.INTERNET",
-        "android.permission.MODIFY_AUDIO_SETTINGS",
-        "android.permission.VIBRATE",
-        "android.permission.POST_NOTIFICATIONS",
-        "android.permission.USE_FULL_SCREEN_INTENT",
-        "android.permission.SYSTEM_ALERT_WINDOW",
-        "android.permission.WAKE_LOCK",
-        "android.permission.BLUETOOTH",
-        "android.permission.REQUEST_INSTALL_PACKAGES"
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.MANAGE_EXTERNAL_STORAGE"
       ]
     },
     "plugins": [
@@ -76,7 +67,8 @@
           "color": "#0284ff",
           "defaultChannel": "messages"
         }
-      ]
+      ],
+      "expo-background-task"
     ],
     "web": {
       "favicon": "./assets/cloud-os-favicon.png"
@@ -84,14 +76,12 @@
     "extra": {
       "apiUrl": "https://cloudos.ng/api",
       "eas": {
-        "projectId": "ddaba80b-6b3f-454f-8a74-9b122782b8af"
+        "projectId": "fb4d15d8-0127-4169-befd-c10f346d505f"
       }
     },
     "runtimeVersion": {
       "policy": "appVersion"
     },
-    "updates": {
-      "url": "https://u.expo.dev/ddaba80b-6b3f-454f-8a74-9b122782b8af"
-    }
+    "owner": "allayayi"
   }
 }

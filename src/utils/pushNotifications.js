@@ -4,12 +4,16 @@ import { deviceService, messageService, signalService } from '../services/api';
 
 export const CALL_NOTIFICATION_CATEGORY = 'cloudos_call';
 export const MESSAGE_NOTIFICATION_CATEGORY = 'cloudos_message';
+export const SUPPORT_NOTIFICATION_CATEGORY = 'cloudos_support';
+export const UPDATE_NOTIFICATION_CATEGORY = 'cloudos_update';
 
 export const NOTIFICATION_ACTIONS = {
   answerCall: 'answer_call',
   declineCall: 'decline_call',
   replyMessage: 'reply_message',
   openMessage: 'open_message',
+  openSupport: 'open_support',
+  openUpdate: 'open_update',
 };
 
 let notificationsModule = null;
@@ -54,12 +58,12 @@ export const configureNotificationActions = async () => {
     {
       identifier: NOTIFICATION_ACTIONS.answerCall,
       buttonTitle: 'Answer',
-      options: { opensAppToForeground: true },
+      options: { opensAppToForeground: true, isAuthenticationRequired: false },
     },
     {
       identifier: NOTIFICATION_ACTIONS.declineCall,
       buttonTitle: 'Decline',
-      options: { opensAppToForeground: false, isDestructive: true },
+      options: { opensAppToForeground: false, isDestructive: true, isAuthenticationRequired: false },
     },
   ]);
 
@@ -71,12 +75,28 @@ export const configureNotificationActions = async () => {
         submitButtonTitle: 'Send',
         placeholder: 'Type your reply...',
       },
-      options: { opensAppToForeground: true },
+      options: { opensAppToForeground: true, isAuthenticationRequired: false },
     },
     {
       identifier: NOTIFICATION_ACTIONS.openMessage,
       buttonTitle: 'Open',
-      options: { opensAppToForeground: true },
+      options: { opensAppToForeground: true, isAuthenticationRequired: false },
+    },
+  ]);
+
+  await Notifications.setNotificationCategoryAsync(SUPPORT_NOTIFICATION_CATEGORY, [
+    {
+      identifier: NOTIFICATION_ACTIONS.openSupport,
+      buttonTitle: 'Open Support',
+      options: { opensAppToForeground: true, isAuthenticationRequired: false },
+    },
+  ]);
+
+  await Notifications.setNotificationCategoryAsync(UPDATE_NOTIFICATION_CATEGORY, [
+    {
+      identifier: NOTIFICATION_ACTIONS.openUpdate,
+      buttonTitle: 'Open',
+      options: { opensAppToForeground: true, isAuthenticationRequired: false },
     },
   ]);
 
@@ -92,6 +112,22 @@ export const configureNotificationActions = async () => {
 
     await Notifications.setNotificationChannelAsync('messages', {
       name: 'Messages',
+      importance: Notifications.AndroidImportance.HIGH,
+      vibrationPattern: [0, 250, 120, 250],
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+      sound: 'default',
+    });
+
+    await Notifications.setNotificationChannelAsync('support-chat', {
+      name: 'Support chat',
+      importance: Notifications.AndroidImportance.HIGH,
+      vibrationPattern: [0, 250, 120, 250],
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+      sound: 'default',
+    });
+
+    await Notifications.setNotificationChannelAsync('app-updates', {
+      name: 'App updates',
       importance: Notifications.AndroidImportance.HIGH,
       vibrationPattern: [0, 250, 120, 250],
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
@@ -168,6 +204,8 @@ export const showIncomingCallNotification = async ({ callerPhoneNumber, callType
       sound: 'default',
       priority: Notifications.AndroidNotificationPriority.MAX,
       categoryIdentifier: CALL_NOTIFICATION_CATEGORY,
+      sticky: true,
+      autoDismiss: false,
       data: {
         kind: 'call',
         callerPhoneNumber,
@@ -190,6 +228,7 @@ export const showMessageNotification = async ({ senderPhoneNumber, title, body }
       sound: 'default',
       priority: Notifications.AndroidNotificationPriority.HIGH,
       categoryIdentifier: MESSAGE_NOTIFICATION_CATEGORY,
+      autoDismiss: true,
       data: {
         kind: 'message',
         senderPhoneNumber,
@@ -254,6 +293,26 @@ export const handleNotificationResponse = async ({ response, currentUser, curren
             name: peerPhoneNumber,
           },
         },
+      });
+    }
+  }
+
+  if (data.kind === 'support_message') {
+    const recipientPhoneNumber = String(data.recipientPhoneNumber || currentDevice?.phoneNumber || '').replace(/\D+/g, '');
+
+    if (navigationRef.isReady()) {
+      navigationRef.navigate('DashboardScreen', {
+        openSupportPhoneNumber: recipientPhoneNumber,
+      });
+    }
+    return;
+  }
+
+  if (data.kind === 'app_update') {
+    if (navigationRef.isReady()) {
+      navigationRef.navigate('DashboardScreen', {
+        showAppUpdate: true,
+        appUpdateTitle: data.title || 'Cloud OS update',
       });
     }
   }

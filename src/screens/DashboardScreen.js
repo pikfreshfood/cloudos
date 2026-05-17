@@ -1,15 +1,18 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Modal, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Modal, Alert, TextInput, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Clipboard from 'expo-clipboard';
+import * as DocumentPicker from 'expo-document-picker';
 import { useOS } from '../context/OSContext';
 import { useAuth } from '../context/AuthContext';
 import { getDeviceStorageSnapshot } from '../utils/deviceStorage';
 import { STORAGE_UPGRADE_OPTIONS, formatNgn, formatStoragePlan } from '../constants/storagePlans';
 import { fileService, paystackService, messageService } from '../services/api';
 const EMPTY_STORAGE = { usedBytes: 0, maxBytes: 0, availableBytes: 0 };
+const SUPPORT_PHONE_NUMBER = '0000000000';
+const SUPPORT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 
 const formatStorageAmount = (bytes) => {
   const mb = bytes / (1024 * 1024);
@@ -19,15 +22,31 @@ const formatStorageAmount = (bytes) => {
   return `${Math.max(mb, 0).toFixed(2)} MB`;
 };
 
-export default function DashboardScreen({ navigation }) {
+export default function DashboardScreen({ navigation, route }) {
   const [showAddModal, setShowAddModal] = useState(false);
   const [upgradeDevice, setUpgradeDevice] = useState(null);
   const [storageSnapshots, setStorageSnapshots] = useState({});
   const [unreadCounts, setUnreadCounts] = useState({});
+  const [supportUnreadCounts, setSupportUnreadCounts] = useState({});
+  const [supportVisible, setSupportVisible] = useState(false);
+  const [supportDevice, setSupportDevice] = useState(null);
+  const [supportMessages, setSupportMessages] = useState([]);
+  const [supportText, setSupportText] = useState('');
+  const [supportAttachment, setSupportAttachment] = useState(null);
+  const [isSupportLoading, setIsSupportLoading] = useState(false);
+  const [isSupportSending, setIsSupportSending] = useState(false);
+  const [isSupportClearing, setIsSupportClearing] = useState(false);
   const { selectDevice } = useOS();
   const { currentUser, logout } = useAuth();
 
   const phones = useMemo(() => currentUser?.devices || [], [currentUser]);
+
+  const supportErrorMessage = (error) => (
+    error?.response?.data?.message
+    || Object.values(error?.response?.data?.errors || {})?.flat()?.[0]
+    || error?.message
+    || 'Could not send message to support.'
+  );
 
   useEffect(() => {
     let isMounted = true;
@@ -95,8 +114,24 @@ export default function DashboardScreen({ navigation }) {
             }
           })
         );
+        const supportEntries = await Promise.all(
+          phones.map(async (phone) => {
+            if (!phone.phoneNumber) return [phone.id, 0];
+            try {
+              const response = await messageService.unreadCount({
+                userId: currentUser.id,
+                phoneNumber: phone.phoneNumber,
+                peerPhoneNumber: SUPPORT_PHONE_NUMBER,
+              });
+              return [phone.id, response.unread_count || 0];
+            } catch (err) {
+              return [phone.id, 0];
+            }
+          })
+        );
         if (isMounted) {
           setUnreadCounts(Object.fromEntries(entries));
+          setSupportUnreadCounts(Object.fromEntries(supportEntries));
         }
       } catch (error) {
         console.error('Failed to load unread counts:', error);
@@ -118,6 +153,166 @@ export default function DashboardScreen({ navigation }) {
   const handleLogout = async () => {
     await logout();
     navigation.replace('LoginScreen');
+  };
+
+  const loadSupportThread = async (device = supportDevice, showLoading = true) => {
+    if (!currentUser?.id || !device?.phoneNumber) return;
+
+    try {
+      if (showLoading) setIsSupportLoading(true);
+      const response = await messageService.thread({
+        userId: currentUser.id,
+        ownerPhoneNumber: device.phoneNumber,
+        peerPhoneNumber: SUPPORT_PHONE_NUMBER,
+      });
+      setSupportMessages(response.messages || []);
+    } catch (error) {
+      if (showLoading) {
+        Alert.alert('Support unavailable', error?.response?.data?.message || 'Could not load support chat.');
+      }
+    } finally {
+      if (showLoading) setIsSupportLoading(false);
+    }
+  };
+
+  const openSupportChat = async (phone) => {
+    if (!phone?.phoneNumber) {
+      Alert.alert('Phone number required', 'This device needs a phone number before support chat can start.');
+      return;
+    }
+
+    setSupportDevice(phone);
+    setSupportVisible(true);
+    await loadSupportThread(phone);
+    setSupportUnreadCounts((prev) => ({ ...prev, [phone.id]: 0 }));
+  };
+
+  useEffect(() => {
+    const openSupportPhoneNumber = route?.params?.openSupportPhoneNumber;
+    if (!openSupportPhoneNumber || !phones.length) return;
+
+    const normalizedTarget = String(openSupportPhoneNumber).replace(/\D+/g, '');
+    const targetDevice = phones.find((phone) => (
+      String(phone.phoneNumber || '').replace(/\D+/g, '') === normalizedTarget
+    ));
+
+    if (targetDevice) {
+      openSupportChat(targetDevice).catch(() => {});
+      navigation.setParams({ openSupportPhoneNumber: undefined });
+    }
+  }, [navigation, phones, route?.params?.openSupportPhoneNumber]);
+
+  useEffect(() => {
+    if (!route?.params?.showAppUpdate) return;
+
+    Alert.alert(
+      route?.params?.appUpdateTitle || 'Cloud OS update',
+      'A new admin update is available for Cloud OS.'
+    );
+    navigation.setParams({ showAppUpdate: undefined, appUpdateTitle: undefined });
+  }, [navigation, route?.params?.appUpdateTitle, route?.params?.showAppUpdate]);
+
+  useEffect(() => {
+    if (!supportVisible || !supportDevice?.phoneNumber) return undefined;
+
+    const interval = setInterval(() => {
+      loadSupportThread(supportDevice, false).catch(() => {});
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [supportDevice, supportVisible]);
+
+  const closeSupportChat = () => {
+    setSupportVisible(false);
+    setSupportDevice(null);
+    setSupportMessages([]);
+    setSupportText('');
+    setSupportAttachment(null);
+  };
+
+  const clearSupportChat = () => {
+    if (!currentUser?.id || !supportDevice?.phoneNumber || isSupportClearing) return;
+
+    Alert.alert(
+      'Clear support chat',
+      'Delete this live chat conversation?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setIsSupportClearing(true);
+              await messageService.deleteThread({
+                userId: currentUser.id,
+                ownerPhoneNumber: supportDevice.phoneNumber,
+                peerPhoneNumber: SUPPORT_PHONE_NUMBER,
+              });
+              setSupportMessages([]);
+              setSupportText('');
+              setSupportAttachment(null);
+            } catch (error) {
+              Alert.alert('Clear failed', error?.response?.data?.message || 'Could not clear support chat.');
+            } finally {
+              setIsSupportClearing(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const sendSupportMessage = async () => {
+    const body = supportText.trim();
+    if ((!body && !supportAttachment) || !currentUser?.id || !supportDevice?.phoneNumber) return;
+
+    try {
+      setIsSupportSending(true);
+      await messageService.send({
+        userId: currentUser.id,
+        senderPhoneNumber: supportDevice.phoneNumber,
+        recipientPhoneNumber: SUPPORT_PHONE_NUMBER,
+        body,
+        attachment: supportAttachment,
+      });
+      setSupportText('');
+      setSupportAttachment(null);
+      await loadSupportThread(supportDevice);
+    } catch (error) {
+      Alert.alert('Send failed', supportErrorMessage(error));
+    } finally {
+      setIsSupportSending(false);
+    }
+  };
+
+  const pickSupportImage = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: 'image/*',
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+
+      if (result.canceled) return;
+
+      const asset = result.assets?.[0];
+      if (!asset?.uri) return;
+
+      if (asset.size && asset.size > SUPPORT_IMAGE_MAX_BYTES) {
+        Alert.alert('Image too large', 'Please choose an image that is 5MB or smaller.');
+        return;
+      }
+
+      setSupportAttachment({
+        uri: asset.uri,
+        name: asset.name || 'support-image.jpg',
+        mimeType: asset.mimeType || 'image/jpeg',
+        size: asset.size || 0,
+      });
+    } catch (error) {
+      Alert.alert('Image unavailable', 'Could not open the image picker.');
+    }
   };
 
   const handleUpgradeDevice = async (plan) => {
@@ -227,6 +422,25 @@ export default function DashboardScreen({ navigation }) {
               <Text style={styles.bootBtnText}>Boot Device</Text>
             </TouchableOpacity>
 
+            <TouchableOpacity
+              style={styles.upgradeBtn}
+              onPress={() => setUpgradeDevice(phone)}
+            >
+              <Text style={styles.upgradeBtnText}>Upgrade Storage</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.supportBtn}
+              onPress={() => openSupportChat(phone)}
+            >
+              <Ionicons name="chatbubble-ellipses-outline" size={18} color="#1d4ed8" />
+              <Text style={styles.supportBtnText}>Support</Text>
+              <View style={[styles.supportUnreadBadge, !supportUnreadCounts[phone.id] && styles.supportUnreadBadgeEmpty]}>
+                <Text style={[styles.supportUnreadBadgeText, !supportUnreadCounts[phone.id] && styles.supportUnreadBadgeTextEmpty]}>
+                  {supportUnreadCounts[phone.id] || 0}
+                </Text>
+              </View>
+            </TouchableOpacity>
 
             </View>
           );
@@ -306,6 +520,102 @@ export default function DashboardScreen({ navigation }) {
             >
               <Text style={styles.purchaseBtnText}>Close</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={supportVisible} transparent={true} animationType="slide" onRequestClose={closeSupportChat}>
+        <View style={styles.supportModalOverlay}>
+          <View style={styles.supportModalContent}>
+            <View style={styles.supportHeader}>
+              <View>
+                <Text style={styles.supportTitle}>Support</Text>
+                <Text style={styles.supportSubtitle}>{supportDevice?.name || 'Selected device'}</Text>
+              </View>
+              <View style={styles.supportHeaderActions}>
+                <TouchableOpacity
+                  onPress={clearSupportChat}
+                  style={[styles.supportHeaderBtn, !supportMessages.length && styles.supportHeaderBtnDisabled]}
+                  disabled={!supportMessages.length || isSupportClearing}
+                >
+                  <Ionicons
+                    name="trash-outline"
+                    size={22}
+                    color={supportMessages.length && !isSupportClearing ? '#dc2626' : '#cbd5e1'}
+                  />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={closeSupportChat} style={styles.supportHeaderBtn}>
+                  <Ionicons name="close" size={24} color="#64748b" />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <ScrollView style={styles.supportMessages} contentContainerStyle={styles.supportMessagesContent}>
+              {isSupportLoading ? (
+                <Text style={styles.supportEmptyText}>Loading chat...</Text>
+              ) : supportMessages.length ? (
+                supportMessages.map((message) => {
+                  const outgoing = message.direction === 'outgoing';
+                  return (
+                    <View key={message.id} style={[styles.supportBubbleRow, outgoing && styles.supportBubbleRowOutgoing]}>
+                      <View style={[styles.supportBubble, outgoing ? styles.supportBubbleOutgoing : styles.supportBubbleIncoming]}>
+                        {message.body ? (
+                          <Text style={[styles.supportBubbleText, outgoing && styles.supportBubbleTextOutgoing]}>
+                            {message.body}
+                          </Text>
+                        ) : null}
+                        {message.attachment_url ? (
+                          <Image source={{ uri: message.attachment_url }} style={styles.supportBubbleImage} resizeMode="cover" />
+                        ) : null}
+                        <Text style={[styles.supportBubbleTime, outgoing && styles.supportBubbleTimeOutgoing]}>
+                          {message.created_at ? new Date(message.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''}
+                        </Text>
+                      </View>
+                    </View>
+                  );
+                })
+              ) : (
+                <Text style={styles.supportEmptyText}>Start a live chat with support.</Text>
+              )}
+            </ScrollView>
+
+            {supportAttachment ? (
+              <View style={styles.supportAttachmentPreview}>
+                <View style={styles.supportAttachmentInfo}>
+                  <Ionicons name="image-outline" size={18} color="#1d4ed8" />
+                  <Text style={styles.supportAttachmentName} numberOfLines={1}>{supportAttachment.name}</Text>
+                </View>
+                <TouchableOpacity onPress={() => setSupportAttachment(null)} style={styles.supportAttachmentRemove}>
+                  <Ionicons name="close" size={18} color="#64748b" />
+                </TouchableOpacity>
+              </View>
+            ) : null}
+
+            <View style={styles.supportComposer}>
+              <TouchableOpacity
+                style={styles.supportAttachBtn}
+                onPress={pickSupportImage}
+                disabled={isSupportSending}
+              >
+                <Ionicons name="image-outline" size={22} color="#1d4ed8" />
+              </TouchableOpacity>
+              <TextInput
+                style={styles.supportInput}
+                value={supportText}
+                onChangeText={setSupportText}
+                placeholder="Type your message..."
+                placeholderTextColor="#94a3b8"
+                multiline
+                editable={!isSupportSending}
+              />
+              <TouchableOpacity
+                style={[styles.supportSendBtn, ((!supportText.trim() && !supportAttachment) || isSupportSending) && styles.supportSendBtnDisabled]}
+                onPress={sendSupportMessage}
+                disabled={(!supportText.trim() && !supportAttachment) || isSupportSending}
+              >
+                <Ionicons name="send" size={18} color="#ffffff" />
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -461,6 +771,44 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
   },
+  supportBtn: {
+    width: '100%',
+    marginTop: 12,
+    backgroundColor: '#eff6ff',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    paddingVertical: 14,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  supportBtnText: {
+    color: '#1d4ed8',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  supportUnreadBadge: {
+    minWidth: 24,
+    height: 24,
+    borderRadius: 12,
+    paddingHorizontal: 7,
+    backgroundColor: '#dc2626',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  supportUnreadBadgeEmpty: {
+    backgroundColor: '#dbeafe',
+  },
+  supportUnreadBadgeText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  supportUnreadBadgeTextEmpty: {
+    color: '#1d4ed8',
+  },
   upgradeBtn: {
     width: '100%',
     marginTop: 12,
@@ -585,5 +933,185 @@ const styles = StyleSheet.create({
   },
   upgradeOptionTextDisabled: {
     color: '#94a3b8',
+  },
+  supportModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.55)',
+    justifyContent: 'flex-end',
+  },
+  supportModalContent: {
+    height: '82%',
+    backgroundColor: '#ffffff',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    overflow: 'hidden',
+  },
+  supportHeader: {
+    minHeight: 72,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+    paddingHorizontal: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  supportTitle: {
+    color: '#0f172a',
+    fontSize: 20,
+    fontWeight: '900',
+  },
+  supportSubtitle: {
+    color: '#64748b',
+    fontSize: 13,
+    marginTop: 2,
+  },
+  supportHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  supportHeaderBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#f8fafc',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  supportHeaderBtnDisabled: {
+    opacity: 0.7,
+  },
+  supportMessages: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
+  },
+  supportMessagesContent: {
+    padding: 16,
+    gap: 10,
+  },
+  supportBubbleRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-start',
+  },
+  supportBubbleRowOutgoing: {
+    justifyContent: 'flex-end',
+  },
+  supportBubble: {
+    maxWidth: '82%',
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+  },
+  supportBubbleIncoming: {
+    backgroundColor: '#ffffff',
+    borderColor: '#dbeafe',
+    borderBottomLeftRadius: 6,
+  },
+  supportBubbleOutgoing: {
+    backgroundColor: '#1d4ed8',
+    borderColor: '#1d4ed8',
+    borderBottomRightRadius: 6,
+  },
+  supportBubbleText: {
+    color: '#0f172a',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  supportBubbleTextOutgoing: {
+    color: '#ffffff',
+  },
+  supportBubbleImage: {
+    width: 190,
+    height: 190,
+    borderRadius: 14,
+    marginTop: 8,
+    backgroundColor: 'rgba(255,255,255,0.25)',
+  },
+  supportBubbleTime: {
+    color: '#94a3b8',
+    fontSize: 10,
+    marginTop: 5,
+  },
+  supportBubbleTimeOutgoing: {
+    color: '#bfdbfe',
+  },
+  supportEmptyText: {
+    textAlign: 'center',
+    color: '#64748b',
+    marginTop: 40,
+    fontSize: 14,
+  },
+  supportComposer: {
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 10,
+    backgroundColor: '#ffffff',
+  },
+  supportAttachmentPreview: {
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#f8fafc',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  supportAttachmentInfo: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  supportAttachmentName: {
+    flex: 1,
+    color: '#334155',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  supportAttachmentRemove: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#e2e8f0',
+  },
+  supportAttachBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#eff6ff',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  supportInput: {
+    flex: 1,
+    minHeight: 48,
+    maxHeight: 110,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    color: '#0f172a',
+    fontSize: 14,
+  },
+  supportSendBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#2563eb',
+  },
+  supportSendBtnDisabled: {
+    backgroundColor: '#94a3b8',
   },
 });

@@ -21,6 +21,23 @@ const slugifyEmail = (email) => email.trim().toLowerCase();
 const createId = (prefix = 'id') => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 const normalizeDigits = (value) => String(value || '').replace(/\D+/g, '');
 const normalizeUsername = (value) => String(value || '').trim().replace(/\s+/g, '').toLowerCase();
+const normalizeServerUserId = (value) => {
+  const text = String(value ?? '').trim();
+  if (!/^\d+$/.test(text)) return null;
+  const userId = Number(text);
+  return Number.isSafeInteger(userId) && userId > 0 ? userId : null;
+};
+const isInvalidUserIdError = (error) => {
+  const responseData = error?.response?.data;
+  const message = String(responseData?.message || error?.message || '').toLowerCase();
+  return (
+    error?.response?.status === 422 &&
+    (
+      message.includes('selected user id is invalid') ||
+      Array.isArray(responseData?.errors?.user_id)
+    )
+  );
+};
 const hashString = (value) => {
   let hash = 0;
 
@@ -106,17 +123,22 @@ const createDefaultDevices = (accountPhoneNumber = '') => attachDevicePhoneNumbe
 
 const syncAccountDevices = async (account, options = {}) => {
   const { required = false } = options;
+  const serverUserId = normalizeServerUserId(account?.id);
 
-  if (!account?.id || !Array.isArray(account.devices) || account.devices.length === 0) {
+  if (!serverUserId || !Array.isArray(account?.devices) || account.devices.length === 0) {
     return;
   }
 
   try {
     await deviceService.sync({
-      userId: account.id,
+      userId: serverUserId,
       devices: account.devices,
     });
   } catch (error) {
+    if (isInvalidUserIdError(error) && !required) {
+      return;
+    }
+
     console.log('Failed to sync device registry:', error?.response?.data?.message || error?.message || error);
     if (required) {
       throw error;
@@ -137,7 +159,7 @@ export const AuthProvider = ({ children }) => {
     const resolvedProfilePicture = user.profile_picture || (allowCachedIdentity ? existingAccount?.profilePicture : null) || null;
 
     return {
-      id: String(user.id),
+      id: user.id,
       name: user.name,
       username: resolvedUsername,
       email: slugifyEmail(user.email),
@@ -238,8 +260,6 @@ export const AuthProvider = ({ children }) => {
             await persistAccounts(normalizedAccounts);
           }
 
-          await Promise.allSettled(normalizedAccounts.map(syncAccountDevices));
-
           if (storedSession) {
             const session = JSON.parse(storedSession);
             setCurrentUserId(session.currentUserId || null);
@@ -275,8 +295,6 @@ export const AuthProvider = ({ children }) => {
         if (accountsInfo.exists && JSON.stringify(loadedAccounts) !== JSON.stringify(normalizedAccounts)) {
           await persistAccounts(normalizedAccounts);
         }
-
-        await Promise.allSettled(normalizedAccounts.map(syncAccountDevices));
 
         if (sessionInfo.exists) {
           const sessionContent = await FileSystem.readAsStringAsync(SESSION_PATH);
@@ -362,7 +380,7 @@ export const AuthProvider = ({ children }) => {
 
     let updated = false;
     const nextAccounts = accounts.map((account) => {
-      if (account.id !== userId) {
+      if (String(account.id) !== String(userId)) {
         return account;
       }
 
@@ -391,7 +409,7 @@ export const AuthProvider = ({ children }) => {
 
     setAccounts(nextAccounts);
     await persistAccounts(nextAccounts);
-    const updatedAccount = nextAccounts.find((account) => account.id === userId);
+    const updatedAccount = nextAccounts.find((account) => String(account.id) === String(userId));
     await syncAccountDevices(updatedAccount);
 
     return { ok: true };

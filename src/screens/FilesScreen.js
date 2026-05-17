@@ -1,13 +1,16 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, Modal, TextInput, Alert, ActivityIndicator, Platform } from 'react-native';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, Modal, TextInput, Alert, ActivityIndicator, Platform, PermissionsAndroid, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { createAudioPlayer } from 'expo-audio';
+import { createVideoPlayer, VideoView } from 'expo-video';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { useOS } from '../context/OSContext';
 import { useAuth } from '../context/AuthContext';
+import { useMusicPlayer } from '../context/MusicPlayerContext';
 import * as DocumentPicker from 'expo-document-picker';
 import { ensureDeviceHasSpace, getDeviceStorageLimitBytes, getDeviceStorageSnapshot } from '../utils/deviceStorage';
 import { resolveLocalRecipientDevice } from '../utils/recipientDevice';
@@ -16,27 +19,42 @@ import { installApk } from '../native/apkInstaller';
 import {
   OfflineSyncStorageFullError,
   addOfflineSyncFolder,
+  enableOfflineSyncFolders,
   getDeviceSyncFolders,
+  readOfflineSyncState,
   registerOfflineSyncTaskAsync,
   removeOfflineSyncFolder,
   runOfflineFolderSync,
+  stopOfflineSync,
+  safFolderName,
 } from '../utils/offlineFolderSync';
 
+const SAF = FileSystem.StorageAccessFramework || null;
+
 export default function FilesScreen({ navigation }) {
-  const { getStorageDir, osType, currentDevice } = useOS();
+  const { getStorageDir, getStorageRoot, osType, currentDevice } = useOS();
   const { accounts, currentUser } = useAuth();
-  const [currentPath, setCurrentPath] = useState(getStorageDir() || '');
+  const {
+    currentTrack: musicCurrentTrack,
+    isPlaying: isMusicPlaying,
+    togglePlayPause: toggleMusicPlayPause,
+  } = useMusicPlayer();
+  const [currentPath, setCurrentPath] = useState('');
   const [history, setHistory] = useState([]);
   const [files, setFiles] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [activeFileTab, setActiveFileTab] = useState('cloud');
   const [syncFolders, setSyncFolders] = useState([]);
-  const [syncBrowserPath, setSyncBrowserPath] = useState(getStorageDir() || '');
+  const [syncBrowserPath, setSyncBrowserPath] = useState('');
   const [syncBrowserHistory, setSyncBrowserHistory] = useState([]);
   const [syncBrowserFolders, setSyncBrowserFolders] = useState([]);
   const [isSyncBrowserLoading, setIsSyncBrowserLoading] = useState(false);
   const [isOfflineSyncing, setIsOfflineSyncing] = useState(false);
+  const [isOfflineSyncActive, setIsOfflineSyncActive] = useState(false);
   const [syncProgressText, setSyncProgressText] = useState('');
+  const [isSyncStopConfirmVisible, setIsSyncStopConfirmVisible] = useState(false);
+  const [isSyncBrowserVisible, setIsSyncBrowserVisible] = useState(false);
+
 
   // Multi-select state
   const [isSelectionMode, setIsSelectionMode] = useState(false);
@@ -70,10 +88,35 @@ export default function FilesScreen({ navigation }) {
     totalFiles: 0,
     progress: 0,
   });
+  const [mediaPreview, setMediaPreview] = useState(null);
+  const [isPreviewAudioPlaying, setIsPreviewAudioPlaying] = useState(false);
+  const audioPreviewPlayerRef = useRef(null);
+  const resumeMusicAfterPreviewRef = useRef(false);
+  const latestMusicStateRef = useRef({ isPlaying: false, currentTrack: null });
+  const videoPreviewPlayer = useMemo(() => createVideoPlayer(null), []);
   const MAX_STORAGE_BYTES = getDeviceStorageLimitBytes(currentDevice);
   const MAX_STORAGE_MB = Math.round(MAX_STORAGE_BYTES / (1024 * 1024));
   const hasApiContext = !!currentUser?.id && !!currentDevice?.id;
   const isApkFile = (name = '') => name.toLowerCase().endsWith('.apk');
+  const getFileExtension = (name = '') => String(name).split('.').pop()?.toLowerCase() || '';
+  const isImageFile = (name = '') => ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(getFileExtension(name));
+  const isAudioFile = (name = '') => ['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg'].includes(getFileExtension(name));
+  const isVideoFile = (name = '') => ['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(getFileExtension(name));
+  const isMediaFile = (name = '') => isImageFile(name) || isAudioFile(name) || isVideoFile(name);
+
+  useEffect(() => () => {
+    try {
+      audioPreviewPlayerRef.current?.release?.();
+      videoPreviewPlayer.release();
+    } catch {}
+  }, [videoPreviewPlayer]);
+
+  useEffect(() => {
+    latestMusicStateRef.current = {
+      isPlaying: isMusicPlaying,
+      currentTrack: musicCurrentTrack,
+    };
+  }, [isMusicPlaying, musicCurrentTrack]);
 
   useFocusEffect(
     useCallback(() => {
@@ -89,7 +132,7 @@ export default function FilesScreen({ navigation }) {
         return;
       }
 
-      const baseDir = getStorageDir() || '';
+      const baseDir = currentDevice?.id ? (getStorageDir() || '') : (getStorageRoot() || '');
       if (!baseDir) {
         setTotalStorageSize(0);
         return;
@@ -107,10 +150,15 @@ export default function FilesScreen({ navigation }) {
   }, [currentPath]);
 
   useEffect(() => {
-    const baseDir = getStorageDir() || '';
+    let baseDir = '';
+    if (currentDevice?.id) {
+      baseDir = getStorageDir() || '';
+    } else if (Platform.OS === 'ios') {
+      baseDir = getStorageRoot() || '';
+    }
     setCurrentPath(baseDir);
     setPickerPath(baseDir);
-    setSyncBrowserPath(baseDir);
+    setSyncBrowserPath('');
     setHistory([]);
     setPickerHistory([]);
     setSyncBrowserHistory([]);
@@ -120,13 +168,82 @@ export default function FilesScreen({ navigation }) {
     if (activeFileTab !== 'sync') return;
 
     refreshOfflineSyncFolders();
-    loadSyncBrowserFolders(syncBrowserPath || getStorageDir() || '');
     registerOfflineSyncTaskAsync();
-  }, [activeFileTab, syncBrowserPath, currentUser?.id, currentDevice?.id]);
+  }, [activeFileTab, currentUser?.id, currentDevice?.id]);
+
+  const isSAFUri = (path) => {
+    return typeof path === 'string' && path.startsWith('content://');
+  };
+
+  const extractNameFromSAFUri = (uri) => {
+    try {
+      const decoded = decodeURIComponent(String(uri || '')).replace(/\/+$/g, '');
+      const lastPathPart = decoded.split('/').filter(Boolean).pop() || '';
+      const storagePart = lastPathPart.includes(':') ? lastPathPart.split(':').pop() : lastPathPart;
+      return storagePart || 'Selected folder';
+    } catch {
+      return 'Selected folder';
+    }
+  };
+
+  const normalizeSAFDirectoryUri = (uri = '') => (
+    uri ? `${String(uri).replace(/\/+$/g, '')}/` : ''
+  );
+
+  const normalizeDirectoryPath = (path = '') => (
+    isSAFUri(path) ? normalizeSAFDirectoryUri(path) : path
+  );
+
+  const getFolderDisplayName = (path = '') => (
+    isSAFUri(path) ? extractNameFromSAFUri(path) : safFolderName(path)
+  );
+
+  const getSAFItemInfo = async (uri) => {
+    try {
+      return await FileSystem.getInfoAsync(uri);
+    } catch {
+      try {
+        await SAF.readDirectoryAsync(uri);
+        return { exists: true, isDirectory: true, size: 0, modificationTime: null };
+      } catch {
+        return { exists: false, isDirectory: false, size: 0, modificationTime: null };
+      }
+    }
+  };
+
+  const getAndroidMainStorageUri = () => {
+    try {
+      return SAF?.getUriForDirectoryInRoot ? SAF.getUriForDirectoryInRoot('') : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const requestStoragePermission = async () => {
+    if (Platform.OS !== 'android') return true;
+    try {
+      const granted = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE,
+        {
+          title: 'Storage Permission',
+          message: 'Cloud OS needs access to your storage to browse files like a file manager.',
+          buttonPositive: 'Grant',
+          buttonNegative: 'Deny',
+        }
+      );
+      return granted === PermissionsAndroid.RESULTS.GRANTED;
+    } catch {
+      return false;
+    }
+  };
 
   const loadFilesFromLocal = async (path) => {
     if (!path) {
-      path = getStorageDir() || '';
+      if (!hasApiContext) {
+        path = getStorageRoot() || '';
+      } else {
+        path = getStorageDir() || '';
+      }
       setCurrentPath(path);
       if (!path) {
         setIsLoading(false);
@@ -136,6 +253,12 @@ export default function FilesScreen({ navigation }) {
     }
     try {
       setIsLoading(true);
+
+      if (isSAFUri(path) && SAF) {
+        await loadFilesFromSAF(path);
+        return;
+      }
+
       const items = await FileSystem.readDirectoryAsync(path);
       
       // Filter out hidden files/folders (starting with dot) and specific system folders
@@ -143,14 +266,17 @@ export default function FilesScreen({ navigation }) {
       
       const fileList = await Promise.all(
         visibleItems.map(async (item) => {
-          const itemPath = `${path}${item}`;
+          const separator = path.endsWith('/') ? '' : '/';
+          const itemPath = `${path}${separator}${item}`;
           const info = await FileSystem.getInfoAsync(itemPath);
           return {
             id: item,
             name: item,
             type: info.isDirectory ? 'folder' : 'file',
             size: info.size ? `${(info.size / 1024).toFixed(2)} KB` : '',
-            date: new Date(info.modificationTime * 1000).toLocaleDateString(),
+            date: info.modificationTime
+              ? new Date(info.modificationTime * 1000).toLocaleDateString()
+              : '',
             path: itemPath,
             remotePath: null,
             isRemote: false,
@@ -165,16 +291,143 @@ export default function FilesScreen({ navigation }) {
       setFiles(fileList);
       calculateTotalStorage(); // Update storage when files change
     } catch (error) {
-      console.error(error);
-      Alert.alert('Error', 'Failed to load files');
+      console.error('Failed to load files from local storage:', error?.message || error);
+
+      if (Platform.OS === 'android') {
+        const hasPermission = await requestStoragePermission();
+        if (hasPermission) {
+          try {
+            const items = await FileSystem.readDirectoryAsync(path);
+            const visibleItems = items.filter(item => !item.startsWith('.'));
+            const fileList = await Promise.all(
+              visibleItems.map(async (item) => {
+                const separator = path.endsWith('/') ? '' : '/';
+                const itemPath = `${path}${separator}${item}`;
+                const info = await FileSystem.getInfoAsync(itemPath);
+                return {
+                  id: item,
+                  name: item,
+                  type: info.isDirectory ? 'folder' : 'file',
+                  size: info.size ? `${(info.size / 1024).toFixed(2)} KB` : '',
+                  date: info.modificationTime
+                    ? new Date(info.modificationTime * 1000).toLocaleDateString()
+                    : '',
+                  path: itemPath,
+                  remotePath: null,
+                  isRemote: false,
+                };
+              })
+            );
+            fileList.sort((a, b) => {
+              if (a.type === b.type) return a.name.localeCompare(b.name);
+              return a.type === 'folder' ? -1 : 1;
+            });
+            setFiles(fileList);
+            calculateTotalStorage();
+          } catch (retryError) {
+            console.error('Still failed after permission grant:', retryError?.message || retryError);
+            setFiles([]);
+            Alert.alert(
+              'Storage Access',
+              'Cannot access device storage. Try using "Browse Storage" option to pick a folder.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Browse Storage', onPress: handleBrowseDeviceStorage },
+              ]
+            );
+          }
+        } else {
+          setFiles([]);
+          Alert.alert(
+            'Permission Denied',
+            'Storage permission is needed to browse files. You can use "Browse Storage" to pick a folder manually.',
+            [
+              { text: 'OK', style: 'cancel' },
+              { text: 'Browse Storage', onPress: handleBrowseDeviceStorage },
+            ]
+          );
+        }
+      } else {
+        setFiles([]);
+        Alert.alert('Error', 'Failed to load files from this location.');
+      }
     } finally {
       setIsLoading(false);
     }
   };
 
+  const loadFilesFromSAF = async (safUri) => {
+    try {
+      const childUris = await SAF.readDirectoryAsync(safUri);
+      const fileList = [];
+
+      for (const uri of childUris) {
+        try {
+          const info = await getSAFItemInfo(uri);
+          if (!info.exists) continue;
+          const name = extractNameFromSAFUri(uri);
+          if (name.startsWith('.')) continue;
+          fileList.push({
+            id: uri,
+            name,
+            type: info.isDirectory ? 'folder' : 'file',
+            size: info.size ? `${(info.size / 1024).toFixed(2)} KB` : '',
+            date: info.modificationTime
+              ? new Date(info.modificationTime * 1000).toLocaleDateString()
+              : '',
+            path: uri,
+            remotePath: null,
+            isRemote: false,
+          });
+        } catch (itemError) {
+          console.warn('Skipping inaccessible item:', uri, itemError?.message);
+        }
+      }
+
+      fileList.sort((a, b) => {
+        if (a.type === b.type) return a.name.localeCompare(b.name);
+        return a.type === 'folder' ? -1 : 1;
+      });
+      setFiles(fileList);
+      calculateTotalStorage();
+    } catch (error) {
+      console.error('SAF read error:', error?.message || error);
+      setFiles([]);
+      Alert.alert('Error', 'Failed to browse storage. Try selecting a different folder.');
+    }
+  };
+
+  const handleBrowseDeviceStorage = async () => {
+    if (Platform.OS === 'android' && SAF) {
+      try {
+        const permission = await SAF.requestDirectoryPermissionsAsync();
+        if (permission.granted && permission.directoryUri) {
+          const uri = permission.directoryUri.replace(/\/+$/g, '') + '/';
+          setHistory([]);
+          setCurrentPath(uri);
+        }
+      } catch (error) {
+        console.error('SAF picker error:', error);
+        Alert.alert('Error', 'Could not open storage browser.');
+      }
+    } else {
+      Alert.alert('Unavailable', 'Storage browsing is not available on this platform.');
+    }
+  };
+
   const loadFiles = async (path) => {
     if (!path) {
-      path = getStorageDir() || '';
+      if (!hasApiContext) {
+        if (Platform.OS === 'android' && !isSAFUri(path)) {
+          setCurrentPath('');
+          setIsLoading(false);
+          setFiles([]);
+          return;
+        }
+        path = getStorageRoot() || '';
+      } else {
+        path = getStorageDir() || '';
+      }
       setCurrentPath(path);
       if (!path) {
         setIsLoading(false);
@@ -184,7 +437,7 @@ export default function FilesScreen({ navigation }) {
     }
 
     if (!hasApiContext) {
-      console.log('Loading files from local storage');
+      console.log('Loading files from local storage:', path);
       await loadFilesFromLocal(path);
       return;
     }
@@ -248,7 +501,11 @@ export default function FilesScreen({ navigation }) {
 
   const loadPickerFolders = async (path) => {
     if (!path) {
-      path = getStorageDir() || '';
+      if (!hasApiContext) {
+        path = getStorageRoot() || '';
+      } else {
+        path = getStorageDir() || '';
+      }
       setPickerPath(path);
       if (!path) return;
     }
@@ -282,31 +539,57 @@ export default function FilesScreen({ navigation }) {
     }
 
     try {
-      const items = await FileSystem.readDirectoryAsync(path);
-      const visibleItems = items.filter(item => !item.startsWith('.'));
-      
-      const folderList = [];
-      for (const item of visibleItems) {
-        const itemPath = `${path}${item}`;
-        const info = await FileSystem.getInfoAsync(itemPath);
-        if (info.isDirectory) {
-          folderList.push({
-            id: item,
-            name: item,
-            path: itemPath,
-            remotePath: null,
-          });
+      if (isSAFUri(path) && SAF) {
+        const childUris = await SAF.readDirectoryAsync(path);
+        const folderList = [];
+        for (const uri of childUris) {
+          try {
+            const info = await getSAFItemInfo(uri);
+            const name = extractNameFromSAFUri(uri);
+            if (info.isDirectory && !name.startsWith('.')) {
+              folderList.push({
+                id: uri,
+                name,
+                path: uri,
+                remotePath: null,
+              });
+            }
+          } catch (itemError) {
+            console.warn('Skipping SAF item in picker:', itemError?.message);
+          }
         }
+        folderList.sort((a, b) => a.name.localeCompare(b.name));
+        setPickerFolders(folderList);
+      } else {
+        const items = await FileSystem.readDirectoryAsync(path);
+        const visibleItems = items.filter(item => !item.startsWith('.'));
+
+        const folderList = [];
+        for (const item of visibleItems) {
+          const separator = path.endsWith('/') ? '' : '/';
+          const itemPath = `${path}${separator}${item}`;
+          const info = await FileSystem.getInfoAsync(itemPath);
+          if (info.isDirectory) {
+            folderList.push({
+              id: item,
+              name: item,
+              path: itemPath,
+              remotePath: null,
+            });
+          }
+        }
+        folderList.sort((a, b) => a.name.localeCompare(b.name));
+        setPickerFolders(folderList);
       }
-      folderList.sort((a, b) => a.name.localeCompare(b.name));
-      setPickerFolders(folderList);
     } catch (error) {
       console.error(error);
     }
   };
 
   const loadSyncBrowserFolders = async (path) => {
-    const baseDir = getStorageDir() || '';
+    const baseDir = currentDevice?.id
+      ? (getStorageDir() || '')
+      : (getStorageRoot() || '');
     const nextPath = path || baseDir;
 
     if (!nextPath) {
@@ -316,24 +599,47 @@ export default function FilesScreen({ navigation }) {
 
     try {
       setIsSyncBrowserLoading(true);
-      const items = await FileSystem.readDirectoryAsync(nextPath);
-      const folders = [];
 
-      for (const item of items.filter((name) => !name.startsWith('.'))) {
-        const itemPath = `${nextPath.endsWith('/') ? nextPath : `${nextPath}/`}${item}`;
-        const info = await FileSystem.getInfoAsync(itemPath);
-
-        if (info.exists && info.isDirectory) {
-          folders.push({
-            id: `${itemPath}/`,
-            name: item,
-            path: `${itemPath}/`,
-          });
+      if (isSAFUri(nextPath) && SAF) {
+        const childUris = await SAF.readDirectoryAsync(nextPath);
+        const folders = [];
+        for (const uri of childUris) {
+          try {
+            const info = await getSAFItemInfo(uri);
+            const name = extractNameFromSAFUri(uri);
+            if (info.isDirectory && !name.startsWith('.')) {
+              folders.push({
+                id: uri,
+                name,
+                path: uri,
+              });
+            }
+          } catch (itemError) {
+            console.warn('Skipping SAF item in sync browser:', itemError?.message);
+          }
         }
-      }
+        folders.sort((a, b) => a.name.localeCompare(b.name));
+        setSyncBrowserFolders(folders);
+      } else {
+        const items = await FileSystem.readDirectoryAsync(nextPath);
+        const folders = [];
 
-      folders.sort((a, b) => a.name.localeCompare(b.name));
-      setSyncBrowserFolders(folders);
+        for (const item of items.filter((name) => !name.startsWith('.'))) {
+          const itemPath = `${nextPath.endsWith('/') ? nextPath : `${nextPath}/`}${item}`;
+          const info = await FileSystem.getInfoAsync(itemPath);
+
+          if (info.exists && info.isDirectory) {
+            folders.push({
+              id: `${itemPath}/`,
+              name: item,
+              path: `${itemPath}/`,
+            });
+          }
+        }
+
+        folders.sort((a, b) => a.name.localeCompare(b.name));
+        setSyncBrowserFolders(folders);
+      }
     } catch (error) {
       console.log('Failed to browse sync folders:', error?.message || error);
       setSyncBrowserFolders([]);
@@ -345,23 +651,28 @@ export default function FilesScreen({ navigation }) {
   const refreshOfflineSyncFolders = async () => {
     if (!currentUser?.id || !currentDevice?.id) {
       setSyncFolders([]);
+      setIsOfflineSyncActive(false);
       return;
     }
 
+    const state = await readOfflineSyncState();
     const folders = await getDeviceSyncFolders({
       userId: currentUser.id,
       deviceId: currentDevice.id,
     });
     setSyncFolders(folders);
+    setIsOfflineSyncActive(!!state.syncActive && folders.some((folder) => folder.enabled));
   };
 
-  const isSyncFolderMarked = (folderPath) => (
-    syncFolders.some((folder) => folder.path === folderPath)
-  );
+  const isSyncFolderMarked = (folderPath) => {
+    const normalizedPath = normalizeDirectoryPath(folderPath);
+    return syncFolders.some((folder) => normalizeDirectoryPath(folder.path) === normalizedPath);
+  };
 
   const handleBrowseSyncFolder = (folderPath) => {
-    setSyncBrowserHistory((current) => [...current, syncBrowserPath || getStorageDir() || '']);
+    setSyncBrowserHistory((current) => [...current, syncBrowserPath || '']);
     setSyncBrowserPath(folderPath);
+    loadSyncBrowserFolders(folderPath);
   };
 
   const handleSyncBrowserBack = () => {
@@ -370,7 +681,10 @@ export default function FilesScreen({ navigation }) {
     const nextHistory = [...syncBrowserHistory];
     const previousPath = nextHistory.pop();
     setSyncBrowserHistory(nextHistory);
-    setSyncBrowserPath(previousPath || getStorageDir() || '');
+    const fallback = currentDevice?.id ? (getStorageDir() || '') : (getStorageRoot() || '');
+    const nextPath = previousPath || fallback;
+    setSyncBrowserPath(nextPath);
+    loadSyncBrowserFolders(nextPath);
   };
 
   const handleToggleSyncFolder = async (folder) => {
@@ -387,7 +701,7 @@ export default function FilesScreen({ navigation }) {
       return;
     }
 
-    const addedFolder = await addOfflineSyncFolder({
+    await addOfflineSyncFolder({
       folderPath: folder.path,
       baseDir: getStorageDir() || '',
       userId: currentUser.id,
@@ -396,13 +710,50 @@ export default function FilesScreen({ navigation }) {
     });
 
     await refreshOfflineSyncFolders();
-    await handleRunOfflineSync([addedFolder.id]);
+  };
+
+  const handleSelectSyncFolder = async (folder) => {
+    if (!hasApiContext) {
+      Alert.alert('Cloud account required', 'Sign in with a Cloud OS account and select a cloud device before enabling offline sync.');
+      return;
+    }
+
+    try {
+      const isExternalFolder = isSAFUri(folder.path);
+      const folderPath = normalizeDirectoryPath(folder.path);
+      const folderName = folder.name || getFolderDisplayName(folderPath);
+
+      try {
+        await fileService.createSyncFolderStructure({
+          userId: currentUser.id,
+          deviceId: currentDevice.id,
+          folderPath: folderName,
+        });
+      } catch (err) {
+        console.log('Folder structure creation skipped:', err?.message);
+      }
+
+      await addOfflineSyncFolder({
+        folderPath,
+        baseDir: isExternalFolder ? folderPath : (getStorageDir() || ''),
+        userId: currentUser.id,
+        deviceId: currentDevice.id,
+        storageMb: currentDevice.storage || 500,
+        isExternal: isExternalFolder,
+      });
+
+      await refreshOfflineSyncFolders();
+      setIsSyncBrowserVisible(false);
+      setSyncProgressText(`Added ${folderName} for sync.`);
+    } catch (error) {
+      Alert.alert('Error', 'Could not add folder for sync.');
+    }
   };
 
   const handleStorageFullAlert = () => {
     Alert.alert(
       'Cloud storage full',
-      'Sync stopped because this device cloud storage is full. Upgrade storage to continue syncing.',
+      'Sync is still active, but uploads will retry in the background after storage is available. Upgrade storage to continue uploading.',
       [
         { text: 'Later', style: 'cancel' },
         { text: 'Upgrade Storage', onPress: () => navigation.navigate('SettingsScreen') },
@@ -418,32 +769,124 @@ export default function FilesScreen({ navigation }) {
 
     try {
       setIsOfflineSyncing(true);
+      setIsOfflineSyncActive(true);
       setSyncProgressText('Preparing offline sync...');
+      await enableOfflineSyncFolders({ folderIds });
       await registerOfflineSyncTaskAsync();
-      const result = await runOfflineFolderSync({
-        folderIds,
-        onProgress: ({ file }) => {
-          setSyncProgressText(`Syncing ${file.name}`);
-        },
-      });
-
       await refreshOfflineSyncFolders();
-      await loadFiles(currentPath);
-      setSyncProgressText(result.uploadedFiles > 0
-        ? `${result.uploadedFiles} file(s) synced.`
-        : 'Everything is up to date.');
+
+      const foldersToSync = folderIds
+        ? syncFolders.filter((f) => folderIds.includes(f.id))
+        : syncFolders;
+      for (const folder of foldersToSync) {
+        try {
+          await fileService.createSyncFolderStructure({
+            userId: currentUser.id,
+            deviceId: currentDevice.id,
+            folderPath: folder.name,
+          });
+        } catch (err) {
+          console.log('Folder structure creation skipped:', err?.message);
+        }
+      }
+      const runSyncPass = async () => {
+        const result = await runOfflineFolderSync({
+          folderIds,
+          onProgress: ({ file }) => {
+            setSyncProgressText(`Syncing ${file.name}`);
+          },
+        });
+
+        await refreshOfflineSyncFolders();
+        await loadFiles(currentPath);
+        if (result.storageFull) {
+          const message = 'Cloud storage is full. Folder sync remains active and will retry in the background.';
+          setSyncProgressText(message);
+          handleStorageFullAlert();
+        } else if (result.failedFiles > 0 || result.failedFolders > 0) {
+          const failedParts = [
+            result.failedFiles > 0 ? `${result.failedFiles} file(s)` : null,
+            result.failedFolders > 0 ? `${result.failedFolders} folder(s)` : null,
+          ].filter(Boolean).join(' and ');
+          const message = `${failedParts} failed to sync. ${result.uploadedFiles} file(s) uploaded. Background sync remains active.`;
+          setSyncProgressText(message);
+          Alert.alert('Sync incomplete', message);
+        } else {
+          setSyncProgressText(result.uploadedFiles > 0
+            ? `${result.uploadedFiles} file(s) synced. Background sync remains active.`
+            : 'Everything is up to date. Background sync remains active.');
+        }
+      };
+
+      setSyncProgressText('Folder sync is active in background');
+      runSyncPass()
+        .catch(async (error) => {
+          await refreshOfflineSyncFolders();
+
+          if (error instanceof OfflineSyncStorageFullError || error?.code === 'STORAGE_FULL') {
+            setSyncProgressText('Cloud storage full. Background sync will keep retrying.');
+            handleStorageFullAlert();
+          } else {
+            setSyncProgressText(error?.message || 'Sync failed.');
+            Alert.alert('Sync failed', error?.message || 'Could not sync offline folders right now.');
+          }
+        })
+        .finally(() => {
+          setIsOfflineSyncing(false);
+        });
     } catch (error) {
       await refreshOfflineSyncFolders();
 
       if (error instanceof OfflineSyncStorageFullError || error?.code === 'STORAGE_FULL') {
-        setSyncProgressText('Sync paused: cloud storage full.');
+        setSyncProgressText('Cloud storage full. Background sync will keep retrying.');
         handleStorageFullAlert();
       } else {
         setSyncProgressText(error?.message || 'Sync failed.');
         Alert.alert('Sync failed', error?.message || 'Could not sync offline folders right now.');
       }
-    } finally {
       setIsOfflineSyncing(false);
+    }
+  };
+
+  const handleStopOfflineSync = () => {
+    setIsSyncStopConfirmVisible(true);
+  };
+
+  const confirmStopOfflineSync = async () => {
+    try {
+      setIsSyncStopConfirmVisible(false);
+      setSyncProgressText('Stopping sync...');
+      await stopOfflineSync();
+      await refreshOfflineSyncFolders();
+      setIsOfflineSyncActive(false);
+      setSyncProgressText('Sync stopped.');
+    } catch (error) {
+      setSyncProgressText('Failed to stop sync.');
+    }
+  };
+  const handleAddFolderFromDevice = async () => {
+    if (!hasApiContext) {
+      Alert.alert('Cloud account required', 'Sign in with a Cloud OS account first.');
+      return;
+    }
+
+    if (Platform.OS === 'android' && SAF) {
+      try {
+        const permission = await SAF.requestDirectoryPermissionsAsync(getAndroidMainStorageUri());
+        if (!permission.granted || !permission.directoryUri) return;
+
+        const selectedPath = normalizeSAFDirectoryUri(permission.directoryUri);
+        await handleSelectSyncFolder({
+          id: selectedPath,
+          name: getFolderDisplayName(selectedPath),
+          path: selectedPath,
+        });
+      } catch (error) {
+        console.log('SAF picker error:', error);
+        Alert.alert('Error', 'Could not add the selected folder for sync.');
+      }
+    } else {
+      Alert.alert('Unavailable', 'Native folder picking is only available on Android in this app.');
     }
   };
 
@@ -501,6 +944,98 @@ export default function FilesScreen({ navigation }) {
     }
   };
 
+  const resolveMediaPreviewUri = (item) => {
+    if (hasApiContext && item.remotePath) {
+      return fileService.getDownloadUrl({
+        userId: currentUser.id,
+        deviceId: currentDevice.id,
+        path: item.remotePath,
+      });
+    }
+
+    return item.path;
+  };
+
+  const resumeMusicIfPreviewInterrupted = async () => {
+    if (!resumeMusicAfterPreviewRef.current) return;
+
+    resumeMusicAfterPreviewRef.current = false;
+    const latestMusicState = latestMusicStateRef.current;
+
+    if (latestMusicState.currentTrack && !latestMusicState.isPlaying) {
+      try {
+        await toggleMusicPlayPause();
+      } catch (error) {
+        console.log('Failed to resume music after media preview:', error?.message || error);
+      }
+    }
+  };
+
+  const closeMediaPreview = () => {
+    try {
+      audioPreviewPlayerRef.current?.pause?.();
+      audioPreviewPlayerRef.current?.release?.();
+      audioPreviewPlayerRef.current = null;
+      videoPreviewPlayer.pause();
+    } catch {}
+
+    setIsPreviewAudioPlaying(false);
+    setMediaPreview(null);
+    setTimeout(() => {
+      resumeMusicIfPreviewInterrupted().catch(() => {});
+    }, 250);
+  };
+
+  const openMediaPreview = async (item) => {
+    const uri = resolveMediaPreviewUri(item);
+    const kind = isImageFile(item.name) ? 'image' : (isVideoFile(item.name) ? 'video' : 'audio');
+
+    const shouldResumeMusic = kind !== 'image' && !!latestMusicStateRef.current.isPlaying;
+    resumeMusicAfterPreviewRef.current = shouldResumeMusic;
+    setMediaPreview({ item, uri, kind });
+    setIsPreviewAudioPlaying(false);
+
+    try {
+      if (shouldResumeMusic) {
+        await toggleMusicPlayPause();
+      }
+
+      if (kind === 'video') {
+        audioPreviewPlayerRef.current?.pause?.();
+        videoPreviewPlayer.loop = false;
+        videoPreviewPlayer.replace(uri);
+        videoPreviewPlayer.play();
+        return;
+      }
+
+      videoPreviewPlayer.pause();
+
+      if (kind === 'audio') {
+        audioPreviewPlayerRef.current?.release?.();
+        const nextPlayer = createAudioPlayer(null);
+        nextPlayer.replace(uri);
+        audioPreviewPlayerRef.current = nextPlayer;
+        nextPlayer.play();
+        setIsPreviewAudioPlaying(true);
+      }
+    } catch (error) {
+      Alert.alert('Preview unavailable', 'This media file could not be previewed.');
+    }
+  };
+
+  const toggleAudioPreview = () => {
+    const player = audioPreviewPlayerRef.current;
+    if (!player) return;
+
+    if (isPreviewAudioPlaying) {
+      player.pause();
+      setIsPreviewAudioPlaying(false);
+    } else {
+      player.play();
+      setIsPreviewAudioPlaying(true);
+    }
+  };
+
   const handleFilePress = (item) => {
     if (isSelectionMode) {
       toggleSelection(item);
@@ -508,7 +1043,12 @@ export default function FilesScreen({ navigation }) {
     }
     if (item.type === 'folder') {
       setHistory([...history, currentPath]);
-      setCurrentPath(`${currentPath}${item.name}/`);
+      if (isSAFUri(currentPath)) {
+        setCurrentPath(item.path);
+      } else {
+        const separator = currentPath.endsWith('/') ? '' : '/';
+        setCurrentPath(`${currentPath}${separator}${item.name}/`);
+      }
     } else {
       const lowerName = String(item.name || '').toLowerCase();
 
@@ -542,6 +1082,11 @@ export default function FilesScreen({ navigation }) {
 
       if (Platform.OS === 'android' && isApkFile(lowerName)) {
         handleInstallApk(item);
+        return;
+      }
+
+      if (isMediaFile(lowerName)) {
+        openMediaPreview(item);
         return;
       }
 
@@ -650,6 +1195,18 @@ export default function FilesScreen({ navigation }) {
                 }));
               },
             });
+          } else if (isSAFUri(currentPath) && SAF) {
+            const assetContent = await FileSystem.readAsStringAsync(asset.uri, {
+              encoding: FileSystem.EncodingType.Base64,
+            });
+            const createdUri = await SAF.createFileAsync(
+              currentPath,
+              asset.name,
+              asset.mimeType || 'application/octet-stream'
+            );
+            await SAF.writeAsStringAsync(createdUri, assetContent, {
+              encoding: FileSystem.EncodingType.Base64,
+            });
           } else {
             const newPath = `${currentPath}${asset.name}`;
             await FileSystem.copyAsync({ from: asset.uri, to: newPath });
@@ -695,6 +1252,8 @@ export default function FilesScreen({ navigation }) {
           folderPath: relativeFolderPath,
           name: inputValue.trim(),
         });
+      } else if (isSAFUri(currentPath) && SAF) {
+        await SAF.makeDirectoryAsync(currentPath, inputValue.trim());
       } else {
         const folderPath = `${currentPath}${inputValue}/`;
         await FileSystem.makeDirectoryAsync(folderPath, { intermediates: true });
@@ -732,6 +1291,9 @@ export default function FilesScreen({ navigation }) {
           name: newName,
           type: selectedFile.type,
         });
+      } else if (isSAFUri(selectedFile.path)) {
+        Alert.alert('Unavailable', 'Renaming is not available for folders selected via Storage Access.');
+        return;
       } else {
         await FileSystem.moveAsync({ from: selectedFile.path, to: newPath });
       }
@@ -765,6 +1327,8 @@ export default function FilesScreen({ navigation }) {
                   path: item.remotePath,
                   type: item.type,
                 });
+              } else if (isSAFUri(item.path) && SAF) {
+                await SAF.deleteAsync(item.path);
               } else {
                 await FileSystem.deleteAsync(item.path, { idempotent: true });
               }
@@ -811,7 +1375,8 @@ export default function FilesScreen({ navigation }) {
       }
 
       for (const item of itemsToProcess) {
-        const destPath = `${pickerPath}${item.name}`;
+        const isSAFDestination = isSAFUri(pickerPath) && SAF;
+        const destPath = isSAFDestination ? item.path : `${pickerPath}${item.name}`;
         const destPathWithFolder = item.type === 'folder' ? `${destPath}/` : destPath;
 
         if (hasApiContext && item.remotePath) {
@@ -831,6 +1396,12 @@ export default function FilesScreen({ navigation }) {
               type: item.type,
               destinationFolderPath,
             });
+          }
+        } else if (isSAFDestination) {
+          if (pickerType === 'move') {
+            await SAF.moveAsync({ from: item.path, to: pickerPath });
+          } else if (pickerType === 'copy') {
+            await SAF.copyAsync({ from: item.path, to: pickerPath });
           }
         } else if (pickerType === 'move') {
           await FileSystem.moveAsync({ from: item.path, to: destPathWithFolder });
@@ -856,9 +1427,12 @@ export default function FilesScreen({ navigation }) {
 
   const openPicker = (type) => {
     setPickerType(type);
-    setPickerPath(getStorageDir() || '');
+    const initialPath = !hasApiContext && isSAFUri(currentPath)
+      ? currentPath
+      : (getStorageDir() || '');
+    setPickerPath(initialPath);
     setPickerHistory([]);
-    loadPickerFolders(getStorageDir() || '');
+    loadPickerFolders(initialPath);
     setPickerModalVisible(true);
   };
 
@@ -1063,7 +1637,7 @@ export default function FilesScreen({ navigation }) {
           <Text style={styles.headerTitle}>{selectedFiles.length} Selected</Text>
           <View style={styles.selectionActions}>
             <TouchableOpacity style={styles.addBtn} onPress={() => openPicker('move')} disabled={selectedFiles.length === 0}>
-              <Ionicons name="move" size={24} color={selectedFiles.length === 0 ? "#cbd5e1" : "#0f172a"} />
+              <Ionicons name="cut-outline" size={24} color={selectedFiles.length === 0 ? "#cbd5e1" : "#0f172a"} />
             </TouchableOpacity>
             <TouchableOpacity style={styles.addBtn} onPress={() => openPicker('copy')} disabled={selectedFiles.length === 0}>
               <Ionicons name="copy" size={24} color={selectedFiles.length === 0 ? "#cbd5e1" : "#0f172a"} />
@@ -1072,7 +1646,7 @@ export default function FilesScreen({ navigation }) {
               <Ionicons name="share-social-outline" size={24} color={selectedFiles.length === 0 ? "#cbd5e1" : "#0f172a"} />
             </TouchableOpacity>
             <TouchableOpacity style={styles.addBtn} onPress={handleExportToPhone} disabled={selectedFiles.length === 0}>
-              <Ionicons name="phone-portrait-outline" size={24} color={selectedFiles.length === 0 ? "#cbd5e1" : "#0f172a"} />
+              <Ionicons name="share-outline" size={24} color={selectedFiles.length === 0 ? "#cbd5e1" : "#0f172a"} />
             </TouchableOpacity>
             <TouchableOpacity style={styles.addBtn} onPress={handleDelete} disabled={selectedFiles.length === 0}>
               <Ionicons name="trash" size={24} color={selectedFiles.length === 0 ? "#cbd5e1" : "#ef4444"} />
@@ -1085,7 +1659,9 @@ export default function FilesScreen({ navigation }) {
             <Ionicons name="chevron-back" size={28} color="#0f172a" />
           </TouchableOpacity>
           <Text style={styles.headerTitle} numberOfLines={1} ellipsizeMode="middle">
-            {history.length === 0 ? 'Files' : (currentPath || '').split('/').slice(-2)[0] || 'Folder'}
+            {history.length === 0
+              ? (hasApiContext ? 'Files' : 'Device Storage')
+              : (currentPath || '').split('/').slice(-2)[0] || 'Folder'}
           </Text>
           {activeFileTab === 'cloud' ? (
             <TouchableOpacity style={styles.addBtn} onPress={handleAddPress}>
@@ -1157,8 +1733,16 @@ export default function FilesScreen({ navigation }) {
 
         {activeFileTab === 'cloud' ? (
           <>
+            {!hasApiContext && currentPath ? (
+              <View style={styles.pathIndicator}>
+                <Ionicons name="folder-open" size={14} color="#64748b" />
+                <Text style={styles.pathText} numberOfLines={1} ellipsizeMode="middle">
+                  {currentPath}
+                </Text>
+              </View>
+            ) : null}
             <View style={styles.listHeader}>
-              <Text style={styles.listTitle}>{hasApiContext ? 'Cloud Files' : 'Files'}</Text>
+              <Text style={styles.listTitle}>{hasApiContext ? 'Cloud Files' : 'Device Storage'}</Text>
               <TouchableOpacity onPress={() => loadFiles(currentPath)}>
                 <Ionicons name="refresh" size={20} color="#64748b" />
               </TouchableOpacity>
@@ -1172,7 +1756,20 @@ export default function FilesScreen({ navigation }) {
                 keyExtractor={item => item.id}
                 renderItem={renderFileItem}
                 contentContainerStyle={styles.listContainer}
-                ListEmptyComponent={<Text style={styles.emptyText}>No files found</Text>}
+                ListEmptyComponent={
+                  !hasApiContext ? (
+                    <View style={styles.emptyContainer}>
+                      <Ionicons name="folder-open-outline" size={48} color="#cbd5e1" />
+                      <Text style={styles.emptyText}>No files found</Text>
+                      <TouchableOpacity style={styles.browseStorageBtn} onPress={handleBrowseDeviceStorage}>
+                        <Ionicons name="search" size={18} color="#ffffff" />
+                        <Text style={styles.browseStorageBtnText}>Browse Device Storage</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <Text style={styles.emptyText}>No files found</Text>
+                  )
+                }
               />
             )}
           </>
@@ -1182,88 +1779,270 @@ export default function FilesScreen({ navigation }) {
               <View style={styles.syncToolbarText}>
                 <Text style={styles.syncOfflineTitle}>Sync Offline</Text>
                 <Text style={styles.syncPathText} numberOfLines={1} ellipsizeMode="middle">
-                  {(syncBrowserPath || '').replace(getStorageDir() || '', 'Device files/')}
+                  {syncFolders.length} folder(s) marked
                 </Text>
               </View>
-              <TouchableOpacity
-                style={[styles.syncNowButton, isOfflineSyncing && styles.syncNowButtonDisabled]}
-                onPress={() => handleRunOfflineSync()}
-                disabled={isOfflineSyncing || syncFolders.length === 0}
-              >
-                {isOfflineSyncing ? (
-                  <ActivityIndicator size="small" color="#ffffff" />
-                ) : (
-                  <Ionicons name="cloud-upload-outline" size={18} color="#ffffff" />
-                )}
-                <Text style={styles.syncNowButtonText}>Sync now</Text>
-              </TouchableOpacity>
+              <View style={styles.syncToolbarActions}>
+                {isOfflineSyncActive && syncFolders.length > 0 ? (
+                  <TouchableOpacity style={styles.syncStopButton} onPress={handleStopOfflineSync}>
+                    <Ionicons name="stop-circle-outline" size={18} color="#ef4444" />
+                    <Text style={styles.syncStopButtonText}>Stop</Text>
+                  </TouchableOpacity>
+                ) : null}
+                <TouchableOpacity
+                  style={[styles.syncNowButton, isOfflineSyncing && styles.syncNowButtonDisabled]}
+                  onPress={() => handleRunOfflineSync()}
+                  disabled={isOfflineSyncing || syncFolders.length === 0}
+                >
+                  {isOfflineSyncing ? (
+                    <ActivityIndicator size="small" color="#ffffff" />
+                  ) : (
+                    <Ionicons name="cloud-upload-outline" size={18} color="#ffffff" />
+                  )}
+                  <Text style={styles.syncNowButtonText}>Sync now</Text>
+                </TouchableOpacity>
+              </View>
             </View>
 
-            <View style={styles.syncSummaryCard}>
-              <Ionicons name="sync-outline" size={20} color="#2563eb" />
-              <Text style={styles.syncSummaryText}>
-                {syncFolders.length} folder(s) marked for cloud sync
-              </Text>
-            </View>
+            <TouchableOpacity style={styles.addFolderFromDeviceBtn} onPress={handleAddFolderFromDevice}>
+              <Ionicons name="folder-open-outline" size={20} color="#2563eb" />
+              <Text style={styles.addFolderFromDeviceText}>Add Folder from Device</Text>
+            </TouchableOpacity>
 
             {syncProgressText ? (
               <Text style={styles.syncProgressText}>{syncProgressText}</Text>
             ) : null}
 
-            {syncBrowserHistory.length > 0 ? (
-              <TouchableOpacity style={styles.syncFolderRow} onPress={handleSyncBrowserBack}>
-                <Ionicons name="arrow-up-circle-outline" size={24} color="#2563eb" />
-                <Text style={styles.syncFolderName}>Back to parent folder</Text>
-              </TouchableOpacity>
-            ) : null}
-
-            {isSyncBrowserLoading ? (
-              <ActivityIndicator size="large" color="#3b82f6" style={{ marginTop: 20 }} />
-            ) : (
+            {syncFolders.length > 0 ? (
               <FlatList
-                data={syncBrowserFolders}
+                data={syncFolders}
                 keyExtractor={item => item.id}
                 contentContainerStyle={styles.listContainer}
-                ListEmptyComponent={<Text style={styles.emptyText}>No folders found</Text>}
-                renderItem={({ item }) => {
-                  const isMarked = isSyncFolderMarked(item.path);
-                  const markedFolder = syncFolders.find((folder) => folder.path === item.path);
-
-                  return (
-                    <View style={[styles.syncFolderRow, isMarked && styles.syncFolderRowMarked]}>
-                      <TouchableOpacity
-                        style={styles.syncFolderBrowse}
-                        onPress={() => handleBrowseSyncFolder(item.path)}
-                      >
-                        <Ionicons name="folder" size={26} color="#f59e0b" />
-                        <View style={styles.syncFolderInfo}>
-                          <Text style={styles.syncFolderName}>{item.name}</Text>
-                          <Text style={styles.syncFolderMeta}>
-                            {isMarked ? `Marked - ${markedFolder?.status || 'queued'}` : 'Tap folder name to browse'}
-                          </Text>
-                        </View>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[styles.syncMarkButton, isMarked && styles.syncMarkButtonActive]}
-                        onPress={() => handleToggleSyncFolder(item)}
-                      >
-                        <Ionicons
-                          name={isMarked ? 'checkmark-circle' : 'ellipse-outline'}
-                          size={22}
-                          color={isMarked ? '#ffffff' : '#2563eb'}
-                        />
-                        <Text style={[styles.syncMarkButtonText, isMarked && styles.syncMarkButtonTextActive]}>
-                          {isMarked ? 'Marked' : 'Mark'}
-                        </Text>
-                      </TouchableOpacity>
+                ListEmptyComponent={<Text style={styles.emptyText}>No folders marked for sync</Text>}
+                renderItem={({ item }) => (
+                  <View style={styles.syncFolderRow}>
+                    <View style={styles.syncFolderInfo}>
+                      <Ionicons name="folder" size={22} color="#f59e0b" />
+                      <View style={styles.syncFolderTextWrap}>
+                        <Text style={styles.syncFolderName}>{item.name}</Text>
+                        <Text style={styles.syncFolderMeta}>{item.status || 'queued'}</Text>
+                        {item.lastError ? (
+                          <Text style={styles.syncFolderError} numberOfLines={2}>{item.lastError}</Text>
+                        ) : null}
+                      </View>
                     </View>
-                  );
-                }}
+                    <TouchableOpacity
+                      style={styles.syncRemoveButton}
+                      onPress={async () => {
+                        await removeOfflineSyncFolder(item.id);
+                        await refreshOfflineSyncFolders();
+                      }}
+                    >
+                      <Ionicons name="close-circle" size={24} color="#ef4444" />
+                    </TouchableOpacity>
+                  </View>
+                )}
               />
+            ) : (
+              <Text style={styles.emptyText}>No folders marked for sync. Tap "Add Folder from Device" above.</Text>
             )}
           </>
         )}
       </View>
+
+      {/* Stop Sync Confirmation Modal */}
+      <Modal visible={isSyncStopConfirmVisible} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.inputModalContent}>
+            <Text style={styles.modalTitle}>Stop Sync</Text>
+            <Text style={styles.modalSubtitle}>
+              This will stop syncing all folders and disable the background sync task. You can add folders again later.
+            </Text>
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={styles.modalBtn} onPress={() => setIsSyncStopConfirmVisible(false)}>
+                <Text style={styles.modalBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.modalBtn, styles.modalBtnPrimary, { backgroundColor: '#ef4444' }]} onPress={confirmStopOfflineSync}>
+                <Text style={styles.modalBtnTextLight}>Stop Sync</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Sync Folder Browser Modal */}
+      <Modal visible={isSyncBrowserVisible} transparent animationType="slide">
+        <View style={styles.fullModalOverlay}>
+          <View style={styles.fullModalContent}>
+            <View style={styles.fullModalHeader}>
+              <TouchableOpacity onPress={() => setIsSyncBrowserVisible(false)} style={styles.fullModalBackBtn}>
+                <Ionicons name="chevron-down" size={28} color="#0f172a" />
+              </TouchableOpacity>
+              <Text style={styles.fullModalTitle}>Select Folder to Sync</Text>
+              <View style={styles.fullModalBackBtn} />
+            </View>
+
+            <View style={styles.fullModalBody}>
+              <View style={styles.syncBrowserToolbar}>
+                {syncBrowserHistory.length > 0 ? (
+                  <TouchableOpacity onPress={handleSyncBrowserBack} style={styles.syncBrowserBackBtn}>
+                    <Ionicons name="chevron-back" size={20} color="#0f172a" />
+                    <Text style={styles.syncBrowserBackText}>Back</Text>
+                  </TouchableOpacity>
+                ) : <View />}
+                <Text style={styles.syncBrowserPath} numberOfLines={1} ellipsizeMode="middle">
+                  {syncBrowserPath.split('/').filter(Boolean).slice(-2).join('/') || 'Root'}
+                </Text>
+                <TouchableOpacity onPress={() => loadSyncBrowserFolders(syncBrowserPath)}>
+                  <Ionicons name="refresh" size={20} color="#64748b" />
+                </TouchableOpacity>
+              </View>
+
+              {syncBrowserPath ? (
+                <View style={styles.syncBrowserCurrentCard}>
+                  <View style={styles.syncBrowserCurrentInfo}>
+                    <Ionicons name="folder-open" size={22} color="#f59e0b" />
+                    <View style={styles.syncBrowserCurrentTextWrap}>
+                      <Text style={styles.syncBrowserCurrentTitle} numberOfLines={1}>
+                        {getFolderDisplayName(syncBrowserPath)}
+                      </Text>
+                      <Text style={styles.syncBrowserCurrentMeta} numberOfLines={1} ellipsizeMode="middle">
+                        {isSyncFolderMarked(syncBrowserPath) ? 'Already added' : 'Current folder'}
+                      </Text>
+                    </View>
+                  </View>
+                  <TouchableOpacity
+                    style={[
+                      styles.syncBrowserSelectCurrentBtn,
+                      isSyncFolderMarked(syncBrowserPath) && styles.syncBrowserSelectBtnDisabled,
+                    ]}
+                    onPress={() => {
+                      if (!isSyncFolderMarked(syncBrowserPath)) {
+                        handleSelectSyncFolder({
+                          id: syncBrowserPath,
+                          name: getFolderDisplayName(syncBrowserPath),
+                          path: syncBrowserPath,
+                        });
+                      }
+                    }}
+                    disabled={isSyncFolderMarked(syncBrowserPath)}
+                  >
+                    <Ionicons
+                      name="checkmark-circle-outline"
+                      size={20}
+                      color={isSyncFolderMarked(syncBrowserPath) ? '#cbd5e1' : '#ffffff'}
+                    />
+                    <Text
+                      style={[
+                        styles.syncBrowserSelectCurrentText,
+                        isSyncFolderMarked(syncBrowserPath) && styles.syncBrowserSelectTextDisabled,
+                      ]}
+                    >
+                      {isSyncFolderMarked(syncBrowserPath) ? 'Added' : 'Select This Folder'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+
+              {isSyncBrowserLoading ? (
+                <ActivityIndicator size="large" color="#3b82f6" style={{ marginTop: 40 }} />
+              ) : (
+                <FlatList
+                  data={syncBrowserFolders}
+                  keyExtractor={item => item.id}
+                  contentContainerStyle={styles.syncBrowserList}
+                  ListEmptyComponent={
+                    <View style={styles.syncBrowserEmpty}>
+                      <Ionicons name="folder-open-outline" size={48} color="#cbd5e1" />
+                      <Text style={styles.syncBrowserEmptyText}>No folders found</Text>
+                    </View>
+                  }
+                  renderItem={({ item }) => {
+                    const isMarked = isSyncFolderMarked(item.path);
+                    return (
+                      <TouchableOpacity
+                        style={[styles.syncBrowserFolderItem, isMarked && styles.syncBrowserFolderItemDisabled]}
+                        onPress={() => {
+                          if (!isMarked) {
+                            handleBrowseSyncFolder(item.path);
+                          }
+                        }}
+                        disabled={isMarked}
+                      >
+                        <View style={styles.syncBrowserFolderLeft}>
+                          <Ionicons name="folder" size={24} color="#f59e0b" />
+                          <View style={styles.syncBrowserFolderInfo}>
+                            <Text style={styles.syncBrowserFolderName}>{item.name}</Text>
+                            {isMarked && <Text style={styles.syncBrowserFolderMarkedText}>Already added</Text>}
+                          </View>
+                        </View>
+                        <TouchableOpacity
+                          style={[styles.syncBrowserSelectBtn, isMarked && styles.syncBrowserSelectBtnDisabled]}
+                          onPress={() => {
+                            if (!isMarked) {
+                              handleSelectSyncFolder(item);
+                            }
+                          }}
+                          disabled={isMarked}
+                        >
+                          <Ionicons name="checkmark-circle-outline" size={20} color={isMarked ? "#cbd5e1" : "#2563eb"} />
+                          <Text style={[styles.syncBrowserSelectText, isMarked && styles.syncBrowserSelectTextDisabled]}>
+                            {isMarked ? "Added" : "Select"}
+                          </Text>
+                        </TouchableOpacity>
+                      </TouchableOpacity>
+                    );
+                  }}
+                />
+              )}
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={!!mediaPreview} transparent animationType="fade" onRequestClose={closeMediaPreview}>
+        <View style={styles.mediaPreviewOverlay}>
+          <View style={styles.mediaPreviewCard}>
+            <View style={styles.mediaPreviewHeader}>
+              <View style={styles.mediaPreviewTitleWrap}>
+                <Text style={styles.mediaPreviewTitle} numberOfLines={1}>{mediaPreview?.item?.name || 'Preview'}</Text>
+                <Text style={styles.mediaPreviewMeta}>{mediaPreview?.kind || 'media'} preview</Text>
+              </View>
+              <TouchableOpacity onPress={closeMediaPreview} style={styles.mediaPreviewCloseBtn}>
+                <Ionicons name="close" size={22} color="#0f172a" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.mediaPreviewBody}>
+              {mediaPreview?.kind === 'image' ? (
+                <Image source={{ uri: mediaPreview.uri }} style={styles.mediaPreviewImage} resizeMode="contain" />
+              ) : null}
+
+              {mediaPreview?.kind === 'video' ? (
+                <VideoView
+                  style={styles.mediaPreviewVideo}
+                  player={videoPreviewPlayer}
+                  contentFit="contain"
+                  nativeControls
+                  allowsFullscreen
+                />
+              ) : null}
+
+              {mediaPreview?.kind === 'audio' ? (
+                <View style={styles.mediaPreviewAudio}>
+                  <View style={styles.mediaPreviewAudioIcon}>
+                    <Ionicons name="musical-notes" size={42} color="#34d399" />
+                  </View>
+                  <Text style={styles.mediaPreviewAudioTitle} numberOfLines={2}>{mediaPreview?.item?.name}</Text>
+                  <TouchableOpacity style={styles.mediaPreviewPlayBtn} onPress={toggleAudioPreview}>
+                    <Ionicons name={isPreviewAudioPlaying ? 'pause' : 'play'} size={26} color="#ffffff" />
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <Modal visible={uploadState.visible} transparent animationType="fade">
         <View style={styles.modalOverlay}>
@@ -1330,7 +2109,7 @@ export default function FilesScreen({ navigation }) {
               <Text style={styles.actionText}>Rename</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.actionItem} onPress={() => openPicker('move')}>
-              <Ionicons name="move" size={24} color="#0f172a" />
+              <Ionicons name="cut-outline" size={24} color="#0f172a" />
               <Text style={styles.actionText}>Move</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.actionItem} onPress={() => openPicker('copy')}>
@@ -1342,7 +2121,7 @@ export default function FilesScreen({ navigation }) {
               <Text style={styles.actionText}>Share to Device</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.actionItem} onPress={handleExportToPhone}>
-              <Ionicons name="phone-portrait-outline" size={24} color="#0f172a" />
+              <Ionicons name="share-outline" size={24} color="#0f172a" />
               <Text style={styles.actionText}>Export to Main Phone</Text>
             </TouchableOpacity>
             {selectedFile?.type === 'file' && isApkFile(selectedFile?.name || '') ? (
@@ -1432,7 +2211,7 @@ export default function FilesScreen({ navigation }) {
             </TouchableOpacity>
           </View>
           <View style={styles.pickerCurrentPath}>
-            <Text style={styles.pickerPathText}>{pickerPath ? pickerPath.replace(getStorageDir() || '', 'Documents/') : 'Documents/'}</Text>
+            <Text style={styles.pickerPathText}>{pickerPath ? (pickerPath.replace(getStorageDir() || '', 'Documents/').replace(getStorageRoot() || '', 'Device/')) : 'Device/'}</Text>
           </View>
           <FlatList
             data={pickerFolders}
@@ -1440,7 +2219,7 @@ export default function FilesScreen({ navigation }) {
             renderItem={({ item }) => (
               <TouchableOpacity style={styles.folderItem} onPress={() => {
                 setPickerHistory([...pickerHistory, pickerPath]);
-                const newPath = `${pickerPath}${item.name}/`;
+                const newPath = isSAFUri(pickerPath) ? item.path : `${pickerPath}${item.name}/`;
                 setPickerPath(newPath);
                 loadPickerFolders(newPath);
               }}>
@@ -1590,6 +2369,21 @@ const styles = StyleSheet.create({
   fileTabTextActive: {
     color: '#ffffff',
   },
+  pathIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f1f5f9',
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    marginBottom: 8,
+    gap: 6,
+  },
+  pathText: {
+    fontSize: 12,
+    color: '#64748b',
+    flex: 1,
+  },
   listHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1660,11 +2454,32 @@ const styles = StyleSheet.create({
   moreBtn: {
     padding: 8,
   },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+  },
   emptyText: {
     textAlign: 'center',
     color: '#64748b',
-    marginTop: 40,
+    marginTop: 16,
     fontSize: 16,
+  },
+  browseStorageBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#2563eb',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+    marginTop: 20,
+    gap: 8,
+  },
+  browseStorageBtnText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
   },
   syncToolbar: {
     flexDirection: 'row',
@@ -1762,6 +2577,11 @@ const styles = StyleSheet.create({
     marginTop: 3,
     textTransform: 'capitalize',
   },
+  syncFolderError: {
+    color: '#dc2626',
+    fontSize: 12,
+    marginTop: 4,
+  },
   syncMarkButton: {
     minHeight: 38,
     borderRadius: 12,
@@ -1833,6 +2653,100 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#475569',
     marginBottom: 18,
+  },
+  mediaPreviewOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15,23,42,0.7)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 18,
+  },
+  mediaPreviewCard: {
+    width: '100%',
+    maxHeight: '82%',
+    borderRadius: 20,
+    backgroundColor: '#ffffff',
+    overflow: 'hidden',
+  },
+  mediaPreviewHeader: {
+    minHeight: 62,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+  },
+  mediaPreviewTitleWrap: {
+    flex: 1,
+    marginRight: 12,
+  },
+  mediaPreviewTitle: {
+    color: '#0f172a',
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  mediaPreviewMeta: {
+    color: '#64748b',
+    fontSize: 12,
+    marginTop: 2,
+    textTransform: 'capitalize',
+  },
+  mediaPreviewCloseBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mediaPreviewBody: {
+    minHeight: 260,
+    backgroundColor: '#020617',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mediaPreviewImage: {
+    width: '100%',
+    height: 360,
+  },
+  mediaPreviewVideo: {
+    width: '100%',
+    height: 300,
+    backgroundColor: '#000000',
+  },
+  mediaPreviewAudio: {
+    width: '100%',
+    minHeight: 280,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  mediaPreviewAudioIcon: {
+    width: 94,
+    height: 94,
+    borderRadius: 24,
+    backgroundColor: 'rgba(16,185,129,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(52,211,153,0.32)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  mediaPreviewAudioTitle: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '800',
+    textAlign: 'center',
+    marginBottom: 18,
+  },
+  mediaPreviewPlayBtn: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: '#2563eb',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   uploadProgressTrack: {
     height: 10,
@@ -1993,5 +2907,286 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  syncToolbarActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  syncStopButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fef2f2',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    gap: 4,
+  },
+  syncStopButtonText: {
+    color: '#ef4444',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  addFolderFromDeviceBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#eff6ff',
+    paddingVertical: 12,
+    marginHorizontal: 16,
+    marginBottom: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    gap: 8,
+  },
+  addFolderFromDeviceText: {
+    color: '#2563eb',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  fullModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  fullModalContent: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
+    marginTop: 40,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    overflow: 'hidden',
+  },
+  fullModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    backgroundColor: '#ffffff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+  },
+  fullModalBackBtn: {
+    width: 36,
+    height: 36,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  fullModalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  fullModalBody: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
+  },
+  syncBrowserToolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#ffffff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+  },
+  syncBrowserBackBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  syncBrowserBackText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0f172a',
+  },
+  syncBrowserPath: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#475569',
+    textAlign: 'center',
+  },
+  syncBrowserCurrentCard: {
+    backgroundColor: '#ffffff',
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 4,
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  syncBrowserCurrentInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 12,
+  },
+  syncBrowserCurrentTextWrap: {
+    flex: 1,
+  },
+  syncBrowserCurrentTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  syncBrowserCurrentMeta: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  syncBrowserSelectCurrentBtn: {
+    minHeight: 42,
+    borderRadius: 10,
+    backgroundColor: '#2563eb',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  syncBrowserSelectCurrentText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  syncBrowserList: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 40,
+  },
+  syncBrowserEmpty: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+  },
+  syncBrowserEmptyText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: '#64748b',
+  },
+  syncBrowserFolderItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#ffffff',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 16,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  syncBrowserFolderItemDisabled: {
+    opacity: 0.5,
+  },
+  syncBrowserFolderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  syncBrowserFolderInfo: {
+    marginLeft: 12,
+    flex: 1,
+  },
+  syncBrowserFolderName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  syncBrowserFolderMarkedText: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  syncBrowserSelectBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#eff6ff',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    gap: 6,
+  },
+  syncBrowserSelectBtnDisabled: {
+    backgroundColor: '#f1f5f9',
+  },
+  syncBrowserSelectText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#2563eb',
+  },
+  syncBrowserSelectTextDisabled: {
+    color: '#94a3b8',
+  },
+  syncSummaryCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#eff6ff',
+    marginHorizontal: 16,
+    marginBottom: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    gap: 8,
+  },
+  syncSummaryText: {
+    color: '#2563eb',
+    fontSize: 13,
+    fontWeight: '600',
+    flex: 1,
+  },
+  syncProgressText: {
+    color: '#64748b',
+    fontSize: 13,
+    textAlign: 'center',
+    paddingVertical: 4,
+    marginHorizontal: 16,
+  },
+  syncFolderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  syncFolderRowMarked: {
+    backgroundColor: '#f0fdf4',
+  },
+  syncFolderBrowse: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  syncFolderInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 10,
+  },
+  syncFolderTextWrap: {
+    flex: 1,
+  },
+  syncFolderName: {
+    fontSize: 15,
+    color: '#0f172a',
+    fontWeight: '600',
+  },
+  syncFolderMeta: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  syncFolderError: {
+    color: '#dc2626',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  syncRemoveButton: {
+    padding: 4,
   },
 });

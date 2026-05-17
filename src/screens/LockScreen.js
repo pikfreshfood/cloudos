@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Dimensions, PanResponder, Animated, ImageBackground } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Dimensions, PanResponder, Animated, ImageBackground, Easing } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -9,6 +9,8 @@ import { useMusicPlayer } from '../context/MusicPlayerContext';
 
 const { height } = Dimensions.get('window');
 const DEFAULT_BACKGROUND_COLORS = ['#020713', '#003f9e', '#0088e8', '#18d7ff'];
+const EQUALIZER_IDLE_HEIGHTS = [8, 11, 14, 8, 11, 14, 8, 11];
+const EQUALIZER_ACTIVE_HEIGHTS = [18, 30, 22, 34, 20, 32, 24, 28];
 
 export default function LockScreen({ navigation }) {
   const [time, setTime] = useState(new Date());
@@ -20,11 +22,79 @@ export default function LockScreen({ navigation }) {
   const { currentTrack, isPlaying, togglePlayPause, playNext, playPrevious, stopDevicePlayback } = useMusicPlayer();
   
   const slideAnim = useRef(new Animated.Value(0)).current;
+  const equalizerBars = useRef(EQUALIZER_IDLE_HEIGHTS.map((barHeight) => new Animated.Value(barHeight))).current;
+  const equalizerLoopsRef = useRef([]);
+  const equalizerRunRef = useRef(0);
 
   useEffect(() => {
     const timer = setInterval(() => setTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    equalizerRunRef.current += 1;
+    const currentRun = equalizerRunRef.current;
+
+    equalizerLoopsRef.current.forEach((animation) => animation.stop?.());
+    equalizerLoopsRef.current = [];
+
+    if (!isPlaying) {
+      equalizerBars.forEach((bar, index) => {
+        Animated.timing(bar, {
+          toValue: EQUALIZER_IDLE_HEIGHTS[index],
+          duration: 180,
+          useNativeDriver: false,
+        }).start();
+      });
+      return undefined;
+    }
+
+    const startBarPulse = (bar, index) => {
+      const animation = Animated.loop(
+        Animated.sequence([
+          Animated.delay(index * 80),
+          Animated.timing(bar, {
+            toValue: EQUALIZER_ACTIVE_HEIGHTS[index],
+            duration: 130 + (index % 4) * 45,
+            easing: Easing.inOut(Easing.quad),
+            useNativeDriver: false,
+          }),
+          Animated.timing(bar, {
+            toValue: EQUALIZER_IDLE_HEIGHTS[index],
+            duration: 120 + (index % 3) * 40,
+            easing: Easing.inOut(Easing.quad),
+            useNativeDriver: false,
+          }),
+          Animated.timing(bar, {
+            toValue: EQUALIZER_ACTIVE_HEIGHTS[(index + 3) % EQUALIZER_ACTIVE_HEIGHTS.length],
+            duration: 150 + (index % 5) * 35,
+            easing: Easing.inOut(Easing.quad),
+            useNativeDriver: false,
+          }),
+          Animated.timing(bar, {
+            toValue: EQUALIZER_IDLE_HEIGHTS[(index + 5) % EQUALIZER_IDLE_HEIGHTS.length],
+            duration: 140 + (index % 4) * 35,
+            easing: Easing.inOut(Easing.quad),
+            useNativeDriver: false,
+          }),
+        ])
+      );
+      animation.start(() => {
+        if (equalizerRunRef.current !== currentRun) {
+          animation.stop?.();
+        }
+      });
+      return animation;
+    };
+
+    equalizerLoopsRef.current = equalizerBars.map(startBarPulse);
+
+    return () => {
+      equalizerRunRef.current += 1;
+      equalizerLoopsRef.current.forEach((animation) => animation.stop?.());
+      equalizerLoopsRef.current = [];
+    };
+  }, [equalizerBars, isPlaying]);
 
   const formatTime = (date) => {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -170,8 +240,27 @@ export default function LockScreen({ navigation }) {
               <Ionicons name="close" size={18} color="#e2e8f0" />
             </TouchableOpacity>
           </View>
-          <Text style={styles.nowPlayingTitle} numberOfLines={1}>{currentTrack.title}</Text>
-          <Text style={styles.nowPlayingArtist} numberOfLines={1}>{currentTrack.artist}</Text>
+          <View style={styles.nowPlayingBody}>
+            <View style={styles.nowPlayingArtwork}>
+              <Ionicons name="musical-note" size={20} color="#34d399" />
+            </View>
+            <View style={styles.nowPlayingTextWrap}>
+              <Text style={styles.nowPlayingTitle} numberOfLines={1}>{currentTrack.title}</Text>
+              <Text style={styles.nowPlayingArtist} numberOfLines={1}>{currentTrack.artist}</Text>
+            </View>
+          </View>
+          <View style={styles.equalizerRow}>
+            {equalizerBars.map((barHeight, index) => (
+              <Animated.View
+                key={`eq-${index}`}
+                style={[
+                  styles.equalizerBar,
+                  { height: barHeight },
+                  isPlaying && styles.equalizerBarActive,
+                ]}
+              />
+            ))}
+          </View>
           <View style={styles.nowPlayingControls}>
             <TouchableOpacity style={styles.nowPlayingBtn} onPress={playPrevious}>
               <Ionicons name="play-skip-back" size={18} color="#ffffff" />
@@ -299,15 +388,15 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   clockContainer: {
-    marginTop: '25%',
+    marginTop: '18%',
     alignItems: 'center',
   },
   nowPlayingCard: {
     width: '86%',
     alignSelf: 'center',
     backgroundColor: 'rgba(15,23,42,0.62)',
-    borderRadius: 24,
-    padding: 18,
+    borderRadius: 20,
+    padding: 12,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.12)',
   },
@@ -315,7 +404,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   nowPlayingHeaderInfo: {
     flexDirection: 'row',
@@ -330,57 +419,93 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   nowPlayingCloseBtn: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(255,255,255,0.08)',
   },
+  nowPlayingBody: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  nowPlayingArtwork: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    backgroundColor: 'rgba(16,185,129,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(52,211,153,0.24)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  nowPlayingTextWrap: {
+    flex: 1,
+  },
   nowPlayingTitle: {
     color: '#ffffff',
-    fontSize: 18,
+    fontSize: 15,
     fontWeight: '700',
   },
   nowPlayingArtist: {
     color: '#cbd5e1',
-    fontSize: 13,
-    marginTop: 4,
+    fontSize: 11,
+    marginTop: 2,
+  },
+  equalizerRow: {
+    height: 34,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    gap: 5,
+    marginTop: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  equalizerBar: {
+    width: 4,
+    borderRadius: 4,
+    backgroundColor: 'rgba(148,163,184,0.65)',
+  },
+  equalizerBarActive: {
+    backgroundColor: '#34d399',
   },
   nowPlayingControls: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 16,
-    gap: 14,
+    marginTop: 10,
+    gap: 12,
   },
   nowPlayingBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     backgroundColor: 'rgba(255,255,255,0.14)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   nowPlayingBtnPrimary: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: '#ffffff',
     alignItems: 'center',
     justifyContent: 'center',
   },
   timeText: {
-    fontSize: 72,
+    fontSize: 60,
     fontWeight: '200',
     color: '#ffffff',
-    letterSpacing: 2,
   },
   dateText: {
-    fontSize: 18,
+    fontSize: 15,
     fontWeight: '500',
     color: '#cbd5e1',
-    marginTop: 8,
+    marginTop: 4,
   },
   unlockArea: {
     marginBottom: 40,

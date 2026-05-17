@@ -8,7 +8,8 @@ import { useOS } from '../context/OSContext';
 import { useMusicPlayer } from '../context/MusicPlayerContext';
 import Slider from '@react-native-community/slider';
 
-const { width } = Dimensions.get('window');
+const { width, height } = Dimensions.get('window');
+const COVER_ART_SIZE = Math.min(width * 0.54, height * 0.26, 220);
 
 export default function MusicScreenDevice({ navigation }) {
   const { osType } = useOS();
@@ -90,12 +91,12 @@ export default function MusicScreenDevice({ navigation }) {
     const createAnim = (animValue) => Animated.loop(
       Animated.sequence([
         Animated.timing(animValue, {
-          toValue: Math.random() * 50 + 20,
+          toValue: Math.random() * 30 + 14,
           duration: Math.random() * 200 + 150,
           useNativeDriver: false,
         }),
         Animated.timing(animValue, {
-          toValue: 10,
+          toValue: 8,
           duration: Math.random() * 200 + 150,
           useNativeDriver: false,
         })
@@ -120,13 +121,13 @@ export default function MusicScreenDevice({ navigation }) {
     visualizerAnim6.stopAnimation();
     visualizerAnim7.stopAnimation();
 
-    Animated.timing(visualizerAnim1, { toValue: 10, duration: 200, useNativeDriver: false }).start();
-    Animated.timing(visualizerAnim2, { toValue: 10, duration: 200, useNativeDriver: false }).start();
-    Animated.timing(visualizerAnim3, { toValue: 10, duration: 200, useNativeDriver: false }).start();
-    Animated.timing(visualizerAnim4, { toValue: 10, duration: 200, useNativeDriver: false }).start();
-    Animated.timing(visualizerAnim5, { toValue: 10, duration: 200, useNativeDriver: false }).start();
-    Animated.timing(visualizerAnim6, { toValue: 10, duration: 200, useNativeDriver: false }).start();
-    Animated.timing(visualizerAnim7, { toValue: 10, duration: 200, useNativeDriver: false }).start();
+    Animated.timing(visualizerAnim1, { toValue: 8, duration: 200, useNativeDriver: false }).start();
+    Animated.timing(visualizerAnim2, { toValue: 8, duration: 200, useNativeDriver: false }).start();
+    Animated.timing(visualizerAnim3, { toValue: 8, duration: 200, useNativeDriver: false }).start();
+    Animated.timing(visualizerAnim4, { toValue: 8, duration: 200, useNativeDriver: false }).start();
+    Animated.timing(visualizerAnim5, { toValue: 8, duration: 200, useNativeDriver: false }).start();
+    Animated.timing(visualizerAnim6, { toValue: 8, duration: 200, useNativeDriver: false }).start();
+    Animated.timing(visualizerAnim7, { toValue: 8, duration: 200, useNativeDriver: false }).start();
   };
 
   useEffect(() => {
@@ -213,16 +214,16 @@ export default function MusicScreenDevice({ navigation }) {
         </TouchableOpacity>
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.coverArtContainer}>
           <LinearGradient colors={['#0f172a', '#064e3b', '#000000']} style={styles.coverArt}>
-            <Ionicons name="musical-notes" size={80} color="#34d399" style={styles.coverIcon} />
+            <Ionicons name="musical-notes" size={58} color="#34d399" style={styles.coverIcon} />
           </LinearGradient>
         </View>
 
         <View style={styles.trackInfo}>
-          <Text style={styles.title}>{currentTrack ? currentTrack.title : 'Choose a track'}</Text>
-          <Text style={styles.artist}>{currentTrack ? currentTrack.artist : 'Unknown Artist'}</Text>
+          <Text style={styles.title} numberOfLines={2}>{currentTrack ? currentTrack.title : 'Choose a track'}</Text>
+          <Text style={styles.artist} numberOfLines={1}>{currentTrack ? currentTrack.artist : 'Unknown Artist'}</Text>
         </View>
 
         <View style={styles.progressContainer}>
@@ -265,12 +266,12 @@ export default function MusicScreenDevice({ navigation }) {
 
         <View style={styles.controls}>
           <TouchableOpacity style={styles.controlBtnSecondary} onPress={toggleRepeatMode}>
-            <Ionicons name={repeatMode === 'one' ? 'repeat-outline' : 'repeat'} size={24} color={repeatMode === 'one' ? '#10b981' : '#94a3b8'} />
+            <Ionicons name={repeatMode === 'one' ? 'repeat-outline' : 'repeat'} size={22} color={repeatMode === 'one' ? '#10b981' : '#94a3b8'} />
             {repeatMode === 'one' && <Text style={styles.repeatBadge}>1</Text>}
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.controlBtnPrimary} onPress={playPrevious}>
-            <Ionicons name="play-skip-back" size={32} color="#ffffff" />
+            <Ionicons name="play-skip-back" size={28} color="#ffffff" />
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.playPauseBtn} onPress={togglePlayPause} disabled={isLoading}>
@@ -278,13 +279,13 @@ export default function MusicScreenDevice({ navigation }) {
               {isLoading ? (
                 <ActivityIndicator color="#ffffff" size="small" />
               ) : (
-                <Ionicons name={isPlaying ? 'pause' : 'play'} size={40} color="#ffffff" style={{ marginLeft: isPlaying ? 0 : 6 }} />
+                <Ionicons name={isPlaying ? 'pause' : 'play'} size={34} color="#ffffff" style={{ marginLeft: isPlaying ? 0 : 5 }} />
               )}
             </LinearGradient>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.controlBtnPrimary} onPress={playNext}>
-            <Ionicons name="play-skip-forward" size={32} color="#ffffff" />
+            <Ionicons name="play-skip-forward" size={28} color="#ffffff" />
           </TouchableOpacity>
 
           <View style={{ position: 'relative' }}>
@@ -295,7 +296,7 @@ export default function MusicScreenDevice({ navigation }) {
             >
               <Ionicons
                 name={isMuted || volume === 0 ? 'volume-mute' : volume > 0.5 ? 'volume-high' : 'volume-low'}
-                size={24}
+                size={22}
                 color={isMuted || volume === 0 ? '#ef4444' : '#94a3b8'}
               />
             </TouchableOpacity>
@@ -426,14 +427,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 10,
-    paddingBottom: 20,
+    paddingHorizontal: 16,
+    paddingTop: 6,
+    paddingBottom: 10,
   },
   headerIconBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(255,255,255,0.08)',
@@ -445,22 +446,23 @@ const styles = StyleSheet.create({
   },
   content: {
     flexGrow: 1,
-    paddingHorizontal: 24,
-    paddingBottom: 40,
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingBottom: 18,
   },
   coverArtContainer: {
     alignItems: 'center',
-    marginTop: 20,
+    marginTop: 8,
     shadowColor: '#10b981',
-    shadowOffset: { width: 0, height: 20 },
+    shadowOffset: { width: 0, height: 12 },
     shadowOpacity: 0.15,
-    shadowRadius: 30,
+    shadowRadius: 20,
     elevation: 10,
   },
   coverArt: {
-    width: width * 0.7,
-    height: width * 0.7,
-    borderRadius: 40,
+    width: COVER_ART_SIZE,
+    height: COVER_ART_SIZE,
+    borderRadius: 28,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
@@ -471,23 +473,26 @@ const styles = StyleSheet.create({
   },
   trackInfo: {
     alignItems: 'center',
-    marginTop: 40,
+    marginTop: 16,
+    minHeight: 58,
   },
   title: {
     color: '#ffffff',
-    fontSize: 32,
+    fontSize: 23,
     fontWeight: '900',
-    letterSpacing: 0.5,
+    lineHeight: 28,
+    textAlign: 'center',
   },
   artist: {
     color: '#10b981',
-    fontSize: 18,
+    fontSize: 14,
     fontWeight: '500',
-    marginTop: 8,
+    marginTop: 4,
     opacity: 0.8,
+    textAlign: 'center',
   },
   progressContainer: {
-    marginTop: 40,
+    marginTop: 16,
   },
   timeRow: {
     flexDirection: 'row',
@@ -501,13 +506,13 @@ const styles = StyleSheet.create({
   },
   slider: {
     width: '100%',
-    height: 40,
+    height: 34,
   },
   visualizerContainer: {
-    marginTop: 30,
+    marginTop: 14,
     backgroundColor: 'rgba(255,255,255,0.05)',
-    borderRadius: 24,
-    padding: 20,
+    borderRadius: 18,
+    padding: 12,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.05)',
   },
@@ -515,13 +520,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 15,
+    marginBottom: 8,
   },
   visualizerTitle: {
     color: 'rgba(16,185,129,0.8)',
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '900',
-    letterSpacing: 2,
+    letterSpacing: 1,
   },
   visualizerStatus: {
     flexDirection: 'row',
@@ -548,48 +553,48 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
   visualizerBox: {
-    height: 80,
+    height: 54,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: 'rgba(0,0,0,0.3)',
-    borderRadius: 16,
+    borderRadius: 12,
   },
   visualizerBars: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    height: 70,
+    height: 48,
     gap: 4,
   },
   visualizerBar: {
-    width: 8,
-    borderRadius: 4,
+    width: 7,
+    borderRadius: 3.5,
   },
   controls: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 40,
-    paddingHorizontal: 10,
+    marginTop: 16,
+    paddingHorizontal: 4,
   },
   controlBtnSecondary: {
-    padding: 10,
+    padding: 8,
   },
   controlBtnPrimary: {
-    padding: 10,
+    padding: 8,
   },
   playPauseBtn: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    width: 64,
+    height: 64,
+    borderRadius: 32,
     shadowColor: '#10b981',
-    shadowOffset: { width: 0, height: 10 },
+    shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.3,
-    shadowRadius: 20,
+    shadowRadius: 16,
     elevation: 10,
   },
   playPauseGradient: {
     flex: 1,
-    borderRadius: 40,
+    borderRadius: 32,
     justifyContent: 'center',
     alignItems: 'center',
   },

@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, ActivityIndicator, Dimensions, Modal, Alert } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, ActivityIndicator, Dimensions, Modal, Alert, AppState } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -8,9 +8,40 @@ import { createVideoPlayer, VideoView } from 'expo-video';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useAuth } from '../context/AuthContext';
 import { useOS } from '../context/OSContext';
-import { fileService } from '../services/api';
+import { fileService, mediaService } from '../services/api';
 
 const { width, height } = Dimensions.get('window');
+const GRID_GAP = 10;
+const VIDEO_CARD_WIDTH = (width - 32 - (GRID_GAP * 2)) / 3;
+
+function VideoThumbnail({ uri }) {
+  const thumbnailPlayer = useMemo(() => createVideoPlayer(null), []);
+
+  useEffect(() => {
+    try {
+      thumbnailPlayer.replace(uri);
+      thumbnailPlayer.currentTime = 0.1;
+      thumbnailPlayer.pause();
+    } catch (error) {
+      console.log('Failed to load video thumbnail:', error?.message || error);
+    }
+
+    return () => {
+      thumbnailPlayer.release();
+    };
+  }, [thumbnailPlayer, uri]);
+
+  return (
+    <VideoView
+      style={styles.videoThumbnail}
+      player={thumbnailPlayer}
+      allowsFullscreen={false}
+      nativeControls={false}
+      contentFit="cover"
+      pointerEvents="none"
+    />
+  );
+}
 
 export default function VideoPlayerScreen({ navigation }) {
   const { getStorageDir, osType, currentDevice } = useOS();
@@ -24,6 +55,7 @@ export default function VideoPlayerScreen({ navigation }) {
   const player = useMemo(() => createVideoPlayer(null), []);
   const fullscreenPlayer = useMemo(() => createVideoPlayer(null), []);
   const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
+  const restoredVideoStateRef = useRef(false);
 
   useEffect(() => () => {
     player.release();
@@ -141,6 +173,99 @@ export default function VideoPlayerScreen({ navigation }) {
     }
   };
 
+  const getActivePlayer = useCallback(() => (
+    isFullscreen ? fullscreenPlayer : player
+  ), [fullscreenPlayer, isFullscreen, player]);
+
+  const persistVideoState = useCallback(async ({ playbackStatus } = {}) => {
+    if (!currentUser?.id || !currentDevice?.id || !selectedVideo) return;
+
+    const activePlayer = getActivePlayer();
+    const positionMs = Math.round((Number(activePlayer.currentTime) || 0) * 1000);
+    const durationMs = Math.round((Number(activePlayer.duration) || 0) * 1000);
+
+    await mediaService.saveState({
+      userId: currentUser.id,
+      deviceId: currentDevice.id,
+      mediaType: 'video',
+      mediaPath: selectedVideo.remotePath || selectedVideo.id,
+      mediaTitle: selectedVideo.title,
+      positionMs,
+      durationMs,
+      playbackStatus: playbackStatus || (activePlayer.playing ? 'playing' : 'paused'),
+      metadata: {
+        videoId: selectedVideo.id,
+        uri: selectedVideo.uri,
+      },
+    });
+  }, [currentDevice?.id, currentUser?.id, getActivePlayer, selectedVideo]);
+
+  useEffect(() => {
+    if (!currentUser?.id || !currentDevice?.id || restoredVideoStateRef.current || !videos.length) return;
+
+    let cancelled = false;
+
+    const restoreLatestVideoState = async () => {
+      try {
+        const response = await mediaService.listStates({
+          userId: currentUser.id,
+          mediaType: 'video',
+        });
+        const latestState = response.media_states?.[0];
+        if (!latestState?.media_path || cancelled) return;
+
+        const video = videos.find((item) => (
+          item.remotePath === latestState.media_path
+          || item.id === latestState.media_path
+          || item.id === latestState.metadata?.videoId
+        ));
+        if (!video) return;
+
+        restoredVideoStateRef.current = true;
+        setPlayerError('');
+        setSelectedVideo(video);
+        setIsFullscreen(false);
+        fullscreenPlayer.pause();
+        player.loop = true;
+        player.replace(video.uri);
+        if (Number(latestState.position_ms) > 0) {
+          player.currentTime = Number(latestState.position_ms) / 1000;
+        }
+        if (latestState.playback_status === 'playing') {
+          player.play();
+        } else {
+          player.pause();
+        }
+      } catch (error) {
+        console.log('Failed to restore remote video playback state:', error?.response?.data?.message || error?.message || error);
+      }
+    };
+
+    restoreLatestVideoState().catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentDevice?.id, currentUser?.id, fullscreenPlayer, player, videos]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      persistVideoState().catch(() => {});
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [persistVideoState]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState !== 'active') {
+        persistVideoState({ playbackStatus: 'paused' }).catch(() => {});
+      }
+    });
+
+    return () => subscription.remove();
+  }, [persistVideoState]);
+
   const handlePlayVideo = (video) => {
     try {
       setPlayerError('');
@@ -157,6 +282,7 @@ export default function VideoPlayerScreen({ navigation }) {
   };
 
   const closeVideo = () => {
+    persistVideoState({ playbackStatus: 'paused' }).catch(() => {});
     player.pause();
     fullscreenPlayer.pause();
     setSelectedVideo(null);
@@ -212,14 +338,17 @@ export default function VideoPlayerScreen({ navigation }) {
 
   const renderVideoItem = ({ item }) => (
     <TouchableOpacity style={styles.videoItem} onPress={() => handlePlayVideo(item)}>
-      <View style={styles.videoIconContainer}>
-        <Ionicons name="videocam" size={24} color="#f43f5e" />
+      <View style={styles.videoThumbnailWrap}>
+        <VideoThumbnail uri={item.uri} />
+        <View style={styles.videoThumbnailShade} />
+        <View style={styles.videoPlayBadge}>
+          <Ionicons name="play" size={13} color="#ffffff" />
+        </View>
       </View>
       <View style={styles.videoInfo}>
-        <Text style={styles.videoTitle} numberOfLines={1}>{item.title}</Text>
+        <Text style={styles.videoTitle} numberOfLines={2}>{item.title}</Text>
         <Text style={styles.videoSize}>{item.size}</Text>
       </View>
-      <Ionicons name="play-circle" size={24} color="#94a3b8" />
     </TouchableOpacity>
   );
 
@@ -280,6 +409,8 @@ export default function VideoPlayerScreen({ navigation }) {
                 data={videos}
                 keyExtractor={item => item.id}
                 renderItem={renderVideoItem}
+                numColumns={3}
+                columnWrapperStyle={styles.videoGridRow}
                 contentContainerStyle={styles.listContainer}
                 ListEmptyComponent={(
                   <View style={styles.emptyState}>
@@ -379,39 +510,62 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 40,
   },
+  videoGridRow: {
+    gap: GRID_GAP,
+    marginBottom: GRID_GAP,
+  },
   videoItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    width: VIDEO_CARD_WIDTH,
     backgroundColor: '#ffffff',
-    padding: 16,
-    borderRadius: 16,
-    marginBottom: 12,
+    borderRadius: 12,
+    overflow: 'hidden',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.05,
     shadowRadius: 2,
     elevation: 2,
   },
-  videoIconContainer: {
-    width: 48,
-    height: 48,
+  videoThumbnailWrap: {
+    width: '100%',
+    aspectRatio: 1,
+    backgroundColor: '#0f172a',
+    position: 'relative',
+  },
+  videoThumbnail: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#0f172a',
+  },
+  videoThumbnailShade: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(15,23,42,0.12)',
+  },
+  videoPlayBadge: {
+    position: 'absolute',
+    right: 6,
+    bottom: 6,
+    width: 24,
+    height: 24,
     borderRadius: 12,
-    backgroundColor: '#ffe4e6',
-    justifyContent: 'center',
+    backgroundColor: 'rgba(244,63,94,0.9)',
     alignItems: 'center',
-    marginRight: 16,
+    justifyContent: 'center',
   },
   videoInfo: {
-    flex: 1,
+    paddingHorizontal: 8,
+    paddingTop: 8,
+    paddingBottom: 10,
+    minHeight: 62,
   },
   videoTitle: {
-    fontSize: 16,
+    fontSize: 12,
     fontWeight: '600',
     color: '#0f172a',
-    marginBottom: 4,
+    lineHeight: 15,
+    marginBottom: 3,
   },
   videoSize: {
-    fontSize: 13,
+    fontSize: 10,
     color: '#64748b',
   },
   emptyState: {

@@ -89,7 +89,7 @@ export const authService = {
 export const deviceService = {
   sync: async ({ userId, devices }) => {
     const response = await api.post('devices/sync', {
-      user_id: userId,
+      user_id: Number(userId) || userId,
       devices: (devices || []).map((device) => ({
         device_id: device.id || device.deviceId,
         name: device.name,
@@ -136,16 +136,28 @@ export const deviceService = {
 };
 
 export const contactService = {
-  list: async ({ userId }) => {
-    const response = await api.get('contacts', { params: { user_id: userId } });
+  list: async ({ userId, deviceId }) => {
+    const params = { user_id: userId };
+    if (deviceId) params.device_id = deviceId;
+    const response = await api.get('contacts', { params });
     return response.data;
   },
-  save: async ({ userId, name, phoneNumber }) => {
-    const response = await api.post('contacts', { user_id: userId, name, phone_number: phoneNumber });
+  save: async ({ userId, deviceId, name, phoneNumber }) => {
+    const data = { user_id: userId, name, phone_number: phoneNumber };
+    if (deviceId) data.device_id = deviceId;
+    const response = await api.post('contacts', data);
     return response.data;
   },
-  remove: async ({ userId, contactId }) => {
-    const response = await api.delete('contacts', { data: { user_id: userId, contact_id: contactId } });
+  remove: async ({ userId, deviceId, contactId }) => {
+    const data = { user_id: userId, contact_id: contactId };
+    if (deviceId) data.device_id = deviceId;
+    const response = await api.delete('contacts', { data });
+    return response.data;
+  },
+  removeMany: async ({ userId, deviceId, contactIds }) => {
+    const data = { user_id: userId, contact_ids: contactIds };
+    if (deviceId) data.device_id = deviceId;
+    const response = await api.delete('contacts/bulk', { data });
     return response.data;
   },
   lookup: async ({ phoneNumber }) => {
@@ -161,9 +173,13 @@ export const messageService = {
     });
     return response.data;
   },
-  unreadCount: async ({ userId, phoneNumber }) => {
+  unreadCount: async ({ userId, phoneNumber, peerPhoneNumber }) => {
     const response = await api.get('messages/unread-count', {
-      params: { user_id: userId, phone_number: phoneNumber },
+      params: {
+        user_id: userId,
+        phone_number: phoneNumber,
+        ...(peerPhoneNumber ? { peer_phone_number: peerPhoneNumber } : {}),
+      },
     });
     return response.data;
   },
@@ -173,7 +189,23 @@ export const messageService = {
     });
     return response.data;
   },
-  send: async ({ userId, senderPhoneNumber, recipientPhoneNumber, body }) => {
+  send: async ({ userId, senderPhoneNumber, recipientPhoneNumber, body, attachment }) => {
+    if (attachment?.uri) {
+      const fileData = await FileSystem.readAsStringAsync(attachment.uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      const response = await api.post('messages', {
+        user_id: userId,
+        sender_phone_number: senderPhoneNumber,
+        recipient_phone_number: recipientPhoneNumber,
+        body: body || '',
+        attachment_base64: fileData,
+        attachment_name: attachment.name || 'chat-image.jpg',
+        attachment_mime: attachment.mimeType || 'image/jpeg',
+      }, { timeout: 60000 });
+      return response.data;
+    }
+
     const response = await api.post('messages', { user_id: userId, sender_phone_number: senderPhoneNumber, recipient_phone_number: recipientPhoneNumber, body });
     return response.data;
   },
@@ -306,6 +338,10 @@ export const fileService = {
     return response.data;
   },
   getDownloadUrl: ({ userId, deviceId, path }) => (`${API_URL}files/download?user_id=${encodeURIComponent(userId)}&device_id=${encodeURIComponent(deviceId)}&path=${encodeURIComponent(path)}`),
+  createSyncFolderStructure: async ({ userId, deviceId, folderPath }) => {
+    const response = await api.post('files/sync-folder-structure', { user_id: userId, device_id: deviceId, folder_path: folderPath });
+    return response.data;
+  },
 };
 
 export const appStoreService = {
@@ -339,6 +375,42 @@ export const mediaService = {
   },
   deleteMedia: async ({ path }) => {
     const response = await api.delete('media', { data: { path } });
+    return response.data;
+  },
+  listStates: async ({ userId, mediaType }) => {
+    const response = await api.get('media-states', {
+      params: { user_id: userId, ...(mediaType ? { media_type: mediaType } : {}) },
+    });
+    return response.data;
+  },
+  getState: async ({ userId, mediaType, mediaPath }) => {
+    const response = await api.get('media-states/show', {
+      params: { user_id: userId, media_type: mediaType, media_path: mediaPath },
+    });
+    return response.data;
+  },
+  saveState: async ({
+    userId,
+    deviceId,
+    mediaType,
+    mediaPath,
+    mediaTitle,
+    positionMs,
+    durationMs,
+    playbackStatus,
+    metadata,
+  }) => {
+    const response = await api.post('media-states', {
+      user_id: userId,
+      device_id: deviceId,
+      media_type: mediaType,
+      media_path: mediaPath,
+      media_title: mediaTitle,
+      position_ms: Math.max(0, Math.round(Number(positionMs) || 0)),
+      duration_ms: Math.max(0, Math.round(Number(durationMs) || 0)),
+      playback_status: playbackStatus,
+      metadata: metadata || {},
+    });
     return response.data;
   },
 };

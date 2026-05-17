@@ -10,7 +10,14 @@ import * as Clipboard from 'expo-clipboard';
 import { useOS } from '../context/OSContext';
 import { useAuth } from '../context/AuthContext';
 import { contactService } from '../services/api';
-import { clearRecentCalls, loadRecentCalls, upsertRecentCall } from '../utils/callHistory';
+import { clearRecentCalls, loadRecentCalls, saveRecentCalls, upsertRecentCall } from '../utils/callHistory';
+import {
+  disableContactSync,
+  enableContactSync,
+  isContactSyncEnabled,
+  requestContactSyncPermission,
+  runContactSync,
+} from '../utils/contactSync';
 
 const { width } = Dimensions.get('window');
 const normalizePhoneNumber = (value) => String(value || '').replace(/\D+/g, '');
@@ -191,6 +198,62 @@ export default function ContactsScreen({ navigation }) {
     progress: 0,
   });
 
+  const [contactSyncEnabled, setContactSyncEnabled] = useState(false);
+  const [contactSyncStatusText, setContactSyncStatusText] = useState('');
+
+  useEffect(() => {
+    (async () => {
+      const enabled = await isContactSyncEnabled();
+      setContactSyncEnabled(enabled);
+      setContactSyncStatusText(enabled ? 'Contact sync is active' : '');
+    })();
+  }, []);
+
+  const handleToggleContactSync = async () => {
+    if (!currentUser?.id) {
+      Alert.alert('Account required', 'Sign in to sync contacts.');
+      return;
+    }
+
+    const deviceId = currentDevice?.id || currentDevice?.deviceId;
+    if (!deviceId) {
+      Alert.alert('Device required', 'Boot or select the Cloud OS device that should own this phone contact sync.');
+      return;
+    }
+    const currentlyEnabled = await isContactSyncEnabled();
+    if (currentlyEnabled) {
+      await disableContactSync();
+      setContactSyncEnabled(false);
+      setContactSyncStatusText('Contact sync disabled');
+    } else {
+      const hasPermission = await requestContactSyncPermission();
+      if (!hasPermission) {
+        setContactSyncStatusText('Contact sync needs contacts permission');
+        Alert.alert('Permission needed', 'Allow contacts permission so Cloud OS can keep syncing contacts in the background.');
+        return;
+      }
+
+      await enableContactSync({ userId: currentUser.id, deviceId });
+      setContactSyncEnabled(true);
+      setContactSyncStatusText('Contact sync is active in background');
+
+      runContactSync({ userId: currentUser.id, deviceId })
+        .then(async (syncResult) => {
+          await loadContacts(false);
+          if (syncResult.synced > 0) {
+            setContactSyncStatusText(`Synced ${syncResult.synced} contact(s) from device`);
+          } else if (syncResult.error) {
+            setContactSyncStatusText(`Contact sync: ${syncResult.error}`);
+          } else {
+            setContactSyncStatusText('Contact sync is active in background');
+          }
+        })
+        .catch((error) => {
+          setContactSyncStatusText(`Contact sync: ${error?.message || 'Sync failed'}`);
+        });
+    }
+  };
+
   const resetImportState = useCallback(() => {
     setImportState({
       visible: false,
@@ -206,10 +269,11 @@ export default function ContactsScreen({ navigation }) {
       setContacts([]);
       return;
     }
+    const deviceId = currentDevice?.id || currentDevice?.deviceId || '';
 
     try {
       if (showLoading) setIsLoading(true);
-      const response = await contactService.list({ userId: currentUser.id });
+      const response = await contactService.list({ userId: currentUser.id, deviceId });
       setContacts(response.contacts || []);
     } catch (error) {
       console.error('Failed to load contacts:', error);
@@ -219,7 +283,7 @@ export default function ContactsScreen({ navigation }) {
     } finally {
       if (showLoading) setIsLoading(false);
     }
-  }, [currentUser?.id]);
+  }, [currentUser?.id, currentDevice?.id, currentDevice?.deviceId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -345,6 +409,61 @@ export default function ContactsScreen({ navigation }) {
     ]);
   }, [currentUser?.id]);
 
+  const handleSaveRecentCall = useCallback((call) => {
+    const phoneNumber = normalizePhoneNumber(call?.phone_number);
+
+    if (!phoneNumber) {
+      Alert.alert('Invalid number', 'This recent call does not have a phone number to save.');
+      return;
+    }
+
+    setNewPhone(phoneNumber);
+    setNewName(call?.name || '');
+    setShowAddModal(true);
+  }, []);
+
+  const handleCopyRecentCall = useCallback(async (call) => {
+    const phoneNumber = normalizePhoneNumber(call?.phone_number);
+    const text = [call?.name, phoneNumber].filter(Boolean).join('\n');
+
+    if (!text) return;
+
+    await Clipboard.setStringAsync(text);
+    Alert.alert('Copied', 'Recent call copied to clipboard.');
+  }, []);
+
+  const handleDeleteRecentCall = useCallback((call) => {
+    if (!call?.id) return;
+
+    Alert.alert('Delete recent call', 'Remove this call from recents?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          const nextCalls = recentCalls.filter((item) => item.id !== call.id);
+          await saveRecentCalls(currentUser?.id, nextCalls);
+          setRecentCalls(nextCalls);
+        },
+      },
+    ]);
+  }, [currentUser?.id, recentCalls]);
+
+  const handleRecentCallLongPress = useCallback((call) => {
+    const phoneNumber = normalizePhoneNumber(call?.phone_number);
+
+    Alert.alert(
+      call?.name || phoneNumber || 'Recent call',
+      phoneNumber || 'Choose an action',
+      [
+        { text: 'Save', onPress: () => handleSaveRecentCall(call) },
+        { text: 'Copy', onPress: () => handleCopyRecentCall(call) },
+        { text: 'Delete', style: 'destructive', onPress: () => handleDeleteRecentCall(call) },
+        { text: 'Cancel', style: 'cancel' },
+      ]
+    );
+  }, [handleCopyRecentCall, handleDeleteRecentCall, handleSaveRecentCall]);
+
   const resetAddModal = () => {
     setShowAddModal(false);
     setNewName('');
@@ -353,6 +472,7 @@ export default function ContactsScreen({ navigation }) {
 
   const handleAddContact = async () => {
     if (!currentUser?.id) return;
+    const deviceId = currentDevice?.id || currentDevice?.deviceId || '';
 
     if (!newName.trim() || !hasPhoneValue(newPhone)) {
       Alert.alert('Invalid contact', 'Enter a name and a phone number.');
@@ -362,6 +482,7 @@ export default function ContactsScreen({ navigation }) {
     try {
       await contactService.save({
         userId: currentUser.id,
+        deviceId,
         name: newName.trim(),
         phoneNumber: normalizeImportedPhone(newPhone),
       });
@@ -378,10 +499,12 @@ export default function ContactsScreen({ navigation }) {
 
   const handleDelete = async (contactId) => {
     if (!currentUser?.id) return;
+    const deviceId = currentDevice?.id || currentDevice?.deviceId || '';
 
     try {
       await contactService.remove({
         userId: currentUser.id,
+        deviceId,
         contactId,
       });
       setContacts((prev) => prev.filter((contact) => contact.id !== contactId));
@@ -403,6 +526,7 @@ export default function ContactsScreen({ navigation }) {
 
   const handleBulkDelete = async () => {
     if (!currentUser?.id || selectedContactIds.length === 0) return;
+    const deviceId = currentDevice?.id || currentDevice?.deviceId || '';
 
     Alert.alert(
       'Delete contacts',
@@ -416,6 +540,7 @@ export default function ContactsScreen({ navigation }) {
             try {
               await contactService.removeMany({
                 userId: currentUser.id,
+                deviceId,
                 contactIds: selectedContactIds.map((id) => Number(id)),
               });
               setContacts((prev) => prev.filter((contact) => !selectedContactIds.includes(contact.id)));
@@ -564,6 +689,7 @@ export default function ContactsScreen({ navigation }) {
         try {
           await contactService.save({
             userId: currentUser.id,
+            deviceId: currentDevice?.id || currentDevice?.deviceId || '',
             name: record.name,
             phoneNumber: record.phone,
           });
@@ -828,7 +954,11 @@ export default function ContactsScreen({ navigation }) {
     const callColor = item.type === 'missed' ? '#ef4444' : item.type === 'received' ? '#16a34a' : '#2563eb';
 
     return (
-      <View style={styles.recentCallCard}>
+      <TouchableOpacity
+        style={styles.recentCallCard}
+        onLongPress={() => handleRecentCallLongPress(item)}
+        activeOpacity={0.85}
+      >
         <View style={[styles.recentCallIcon, { backgroundColor: `${callColor}18` }]}>
           <Ionicons name={callIcon} size={18} color={callColor} />
         </View>
@@ -848,7 +978,7 @@ export default function ContactsScreen({ navigation }) {
         >
           <Ionicons name="call" size={16} color="#ffffff" />
         </TouchableOpacity>
-      </View>
+      </TouchableOpacity>
     );
   };
 
@@ -952,10 +1082,21 @@ export default function ContactsScreen({ navigation }) {
           <TouchableOpacity style={styles.addBtn} onPress={() => setShowAddModal(true)}>
             <Ionicons name="person-add" size={24} color="#0f172a" />
           </TouchableOpacity>
+          <TouchableOpacity style={styles.addBtn} onPress={handleToggleContactSync}>
+            <Ionicons
+              name="sync-outline"
+              size={24}
+              color={contactSyncEnabled ? '#2563eb' : '#0f172a'}
+            />
+          </TouchableOpacity>
         </View>
       </View>
 
       <View style={styles.contactsContent}>
+        <Text style={styles.totalContactsText}>{displayedContacts.length} contact{displayedContacts.length === 1 ? '' : 's'}</Text>
+        {contactSyncStatusText ? (
+          <Text style={styles.contactSyncStatusText}>{contactSyncStatusText}</Text>
+        ) : null}
         <View style={styles.searchInputWrapper}>
           <Ionicons name="search" size={18} color="#64748b" style={styles.searchIcon} />
           <TextInput
@@ -1394,6 +1535,12 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#0f172a',
   },
+  totalContactsText: {
+    color: '#475569',
+    fontSize: 13,
+    fontWeight: '600',
+    marginBottom: 14,
+  },
   selectionToolbar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1804,5 +1951,16 @@ const styles = StyleSheet.create({
     padding: 12,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  contactSyncStatusText: {
+    color: '#2563eb',
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
+    paddingVertical: 6,
+    marginBottom: 6,
+    backgroundColor: '#eff6ff',
+    borderRadius: 8,
+    overflow: 'hidden',
   },
 });
