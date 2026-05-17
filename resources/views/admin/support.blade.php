@@ -160,11 +160,16 @@
         margin-top: 14px;
     }
     .reply-form textarea {
+        height: 110px;
         min-height: 110px;
+        max-height: 110px;
         border: 1px solid #cbd8f6;
         border-radius: 12px;
         font-size: 15px;
         padding: 14px;
+        overflow-y: auto;
+        resize: none;
+        line-height: 1.45;
     }
     .reply-form .btn {
         margin-top: 10px;
