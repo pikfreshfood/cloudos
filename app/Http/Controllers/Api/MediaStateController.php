@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Models\MediaState;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class MediaStateController extends Controller
 {
@@ -60,7 +62,7 @@ class MediaStateController extends Controller
     {
         $validated = $request->validate([
             'user_id' => ['required', 'integer', 'exists:users,id'],
-            'device_id' => ['nullable', 'integer', 'exists:devices,id'],
+            'device_id' => ['nullable', 'string', 'max:255'],
             'media_type' => ['required', 'string', 'in:music,video'],
             'media_path' => ['required', 'string', 'max:500'],
             'media_title' => ['nullable', 'string', 'max:255'],
@@ -69,6 +71,10 @@ class MediaStateController extends Controller
             'playback_status' => ['required', 'string', 'in:playing,paused,stopped'],
             'metadata' => ['nullable', 'array'],
         ]);
+        $databaseDeviceId = $this->resolveDatabaseDeviceId(
+            (int) $validated['user_id'],
+            $validated['device_id'] ?? null
+        );
 
         $mediaState = MediaState::updateOrCreate(
             [
@@ -76,7 +82,10 @@ class MediaStateController extends Controller
                 'media_type' => $validated['media_type'],
                 'media_path' => $validated['media_path'],
             ],
-            $validated
+            [
+                ...$validated,
+                'device_id' => $databaseDeviceId,
+            ]
         );
 
         $mediaState->load(['device:id,name']);
@@ -104,5 +113,25 @@ class MediaStateController extends Controller
         return response()->json([
             'message' => 'Media state deleted successfully.',
         ]);
+    }
+
+    private function resolveDatabaseDeviceId(int $userId, ?string $deviceId): ?int
+    {
+        if (! $deviceId || ! Schema::hasTable('devices')) {
+            return null;
+        }
+
+        $query = DB::table('devices')->where('user_id', $userId);
+
+        if (ctype_digit($deviceId)) {
+            $byPrimaryKey = (clone $query)->where('id', (int) $deviceId)->value('id');
+            if ($byPrimaryKey) {
+                return (int) $byPrimaryKey;
+            }
+        }
+
+        $byExternalId = $query->where('device_id', $deviceId)->value('id');
+
+        return $byExternalId ? (int) $byExternalId : null;
     }
 }

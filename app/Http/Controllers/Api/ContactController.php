@@ -24,10 +24,7 @@ class ContactController extends Controller
             ->where('user_id', $validated['user_id']);
 
         if ($this->hasContactDeviceIdColumn() && ! empty($validated['device_id'])) {
-            $query->where(function ($q) use ($validated) {
-                $q->where('device_id', $validated['device_id'])
-                  ->orWhereNull('device_id');
-            });
+            $query->where('device_id', $validated['device_id']);
         }
 
         $contacts = $query
@@ -73,6 +70,15 @@ class ContactController extends Controller
 
         $hasDeviceIdColumn = $this->hasContactDeviceIdColumn();
 
+        if ($hasDeviceIdColumn && empty($validated['device_id'])) {
+            return response()->json([
+                'message' => 'Device id is required so synced contacts stay assigned to the device OS that synced them.',
+                'errors' => [
+                    'device_id' => ['Device id is required.'],
+                ],
+            ], 422);
+        }
+
         if ($hasDeviceIdColumn && ! empty($validated['device_id'])) {
             $updateOrCreate['device_id'] = $validated['device_id'];
         }
@@ -109,10 +115,7 @@ class ContactController extends Controller
             ->where('user_id', $userId);
 
         if ($this->hasContactDeviceIdColumn() && ! empty($validated['device_id'])) {
-            $query->where(function ($q) use ($validated) {
-                $q->where('device_id', $validated['device_id'])
-                  ->orWhereNull('device_id');
-            });
+            $query->where('device_id', $validated['device_id']);
         }
 
         $contact = $query->findOrFail($contactId);
@@ -137,10 +140,7 @@ class ContactController extends Controller
             ->where('user_id', $validated['user_id']);
 
         if ($this->hasContactDeviceIdColumn() && ! empty($validated['device_id'])) {
-            $query->where(function ($q) use ($validated) {
-                $q->where('device_id', $validated['device_id'])
-                  ->orWhereNull('device_id');
-            });
+            $query->where('device_id', $validated['device_id']);
         }
 
         $deletedCount = $query
@@ -190,11 +190,15 @@ class ContactController extends Controller
     private function mapContact(Contact $contact): array
     {
         $linkedDevice = $this->findDeviceByPhoneNumber($contact->phone_number);
+        $syncDevice = $this->findDeviceByDeviceId((string) ($contact->device_id ?? ''));
 
         return [
             'id' => (string) $contact->id,
             'name' => $contact->name,
             'phone_number' => $contact->phone_number,
+            'device_id' => $contact->device_id,
+            'device_os' => $syncDevice?->os,
+            'sync_device' => $syncDevice ? $this->mapDevice($syncDevice) : null,
             'linked_user' => $contact->contactUser ? [
                 'id' => (string) $contact->contactUser->id,
                 'name' => $contact->contactUser->name,
@@ -219,6 +223,17 @@ class ContactController extends Controller
         return DB::table('devices')
             ->where('phone_number', $phoneNumber)
             ->orWhere('phone_number', $digits)
+            ->first();
+    }
+
+    private function findDeviceByDeviceId(string $deviceId): ?object
+    {
+        if ($deviceId === '' || ! Schema::hasTable('devices')) {
+            return null;
+        }
+
+        return DB::table('devices')
+            ->where('device_id', $deviceId)
             ->first();
     }
 
