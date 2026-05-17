@@ -95,6 +95,7 @@ Route::get('/admin/developers', [AdminController::class, 'developers'])->name('a
 Route::get('/admin/apps', [AdminController::class, 'apps'])->name('admin.apps');
 Route::post('/admin/apps/{app}/status', [AdminController::class, 'updateAppStatus'])->name('admin.apps.status');
 Route::get('/admin/support', [AdminController::class, 'support'])->name('admin.support');
+Route::get('/admin/support/thread', [AdminController::class, 'supportThread'])->name('admin.support.thread');
 Route::post('/admin/support/{message}/status', [AdminController::class, 'updateSupportStatus'])->name('admin.support.status');
 Route::post('/admin/support/reply', [AdminController::class, 'sendSupportReply'])->name('admin.support.reply');
 Route::get('/admin/payments', [AdminController::class, 'payments'])->name('admin.payments');

@@ -337,6 +337,60 @@ class AdminController extends Controller
         ]);
     }
 
+    public function supportThread(Request $request): JsonResponse
+    {
+        if (! $this->isLoggedIn($request)) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        $validated = $request->validate([
+            'phone_number' => ['required', 'regex:/^\d{3,20}$/'],
+            'after_id' => ['nullable', 'integer', 'min:0'],
+        ]);
+
+        $supportPhoneNumber = '0000000000';
+        $selectedPhoneNumber = $this->normalizePhoneNumber($validated['phone_number']);
+
+        if (! Schema::hasTable('messages') || ! $selectedPhoneNumber) {
+            return response()->json(['messages' => []]);
+        }
+
+        $query = \App\Models\Message::query()
+            ->where(function ($q) use ($supportPhoneNumber, $selectedPhoneNumber) {
+                $q->where(function ($q2) use ($supportPhoneNumber, $selectedPhoneNumber) {
+                    $q2->where('sender_phone_number', $supportPhoneNumber)
+                        ->where('recipient_phone_number', $selectedPhoneNumber);
+                })->orWhere(function ($q2) use ($supportPhoneNumber, $selectedPhoneNumber) {
+                    $q2->where('sender_phone_number', $selectedPhoneNumber)
+                        ->where('recipient_phone_number', $supportPhoneNumber);
+                });
+            });
+
+        if (! empty($validated['after_id'])) {
+            $query->where('id', '>', (int) $validated['after_id']);
+        }
+
+        $messages = $query->orderBy('id')
+            ->get()
+            ->map(function ($message) use ($supportPhoneNumber) {
+                $isAdmin = $message->sender_phone_number === $supportPhoneNumber;
+
+                return [
+                    'id' => (string) $message->id,
+                    'body' => $message->body,
+                    'is_admin' => $isAdmin,
+                    'author' => $isAdmin ? 'Support' : ($message->sender_name ?: 'User'),
+                    'created_at' => optional($message->created_at)?->toISOString(),
+                    'created_at_display' => optional($message->created_at)?->format('d M Y, H:i'),
+                ];
+            })
+            ->values();
+
+        return response()->json([
+            'messages' => $messages,
+        ]);
+    }
+
     public function payments(Request $request): View|RedirectResponse
     {
         if (! $this->isLoggedIn($request)) {

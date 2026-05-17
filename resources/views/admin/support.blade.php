@@ -223,11 +223,15 @@
                 <div class="chat-email">{{ $selectedUser->email }}</div>
             </div>
 
-            <div class="chat-messages" id="supportChatMessages">
+            <div
+                class="chat-messages"
+                id="supportChatMessages"
+                data-thread-url="{{ route('admin.support.thread', ['phone_number' => $selectedPhoneNumber]) }}"
+            >
                 @php($chatMessages = $messages instanceof \Illuminate\Pagination\AbstractPaginator ? $messages->getCollection()->reverse() : $messages->reverse())
                 @forelse ($chatMessages as $message)
                     @php($isAdmin = $message->sender_phone_number === '0000000000')
-                    <div class="bubble-row {{ $isAdmin ? 'admin' : '' }}">
+                    <div class="bubble-row {{ $isAdmin ? 'admin' : '' }}" data-message-id="{{ $message->id }}">
                         <div class="bubble {{ $isAdmin ? 'admin' : '' }}">
                             <span class="bubble-author">{{ $isAdmin ? 'Support' : $selectedUser->name }}</span>
                             <div class="bubble-body">{{ $message->body }}</div>
@@ -271,18 +275,33 @@
             messages.scrollTop = messages.scrollHeight;
         };
 
-        const appendAdminMessage = (message) => {
+        const seenMessageIds = new Set(
+            Array.from(messages.querySelectorAll('[data-message-id]')).map((item) => String(item.dataset.messageId))
+        );
+        let lastRenderedId = Math.max(0, ...Array.from(seenMessageIds).map((id) => Number(id) || 0));
+
+        const appendChatMessage = (message) => {
+            const messageId = String(message.id || '');
+            if (messageId && seenMessageIds.has(messageId)) {
+                return;
+            }
+
             messages.querySelector('.muted')?.remove();
 
             const row = document.createElement('div');
-            row.className = 'bubble-row admin';
+            row.className = `bubble-row ${message.is_admin ? 'admin' : ''}`.trim();
+            if (messageId) {
+                row.dataset.messageId = messageId;
+                seenMessageIds.add(messageId);
+                lastRenderedId = Math.max(lastRenderedId, Number(messageId) || 0);
+            }
 
             const bubble = document.createElement('div');
-            bubble.className = 'bubble admin';
+            bubble.className = `bubble ${message.is_admin ? 'admin' : ''}`.trim();
 
             const author = document.createElement('span');
             author.className = 'bubble-author';
-            author.textContent = 'Support';
+            author.textContent = message.author || (message.is_admin ? 'Support' : 'User');
 
             const messageBody = document.createElement('div');
             messageBody.className = 'bubble-body';
@@ -298,7 +317,31 @@
             scrollToBottom();
         };
 
+        const loadThreadMessages = async () => {
+            const threadUrl = messages.dataset.threadUrl;
+            if (!threadUrl) {
+                return;
+            }
+
+            const response = await fetch(`${threadUrl}&after_id=${lastRenderedId}`, {
+                headers: {
+                    'Accept': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+            });
+            const payload = await response.json().catch(() => ({}));
+
+            if (!response.ok) {
+                throw new Error(payload.message || 'Could not load support messages.');
+            }
+
+            (payload.messages || []).forEach(appendChatMessage);
+        };
+
         scrollToBottom();
+        setInterval(() => {
+            loadThreadMessages().catch(() => {});
+        }, 3000);
 
         form.addEventListener('submit', async (event) => {
             event.preventDefault();
@@ -329,7 +372,7 @@
                     throw new Error(payload.message || 'Could not send reply.');
                 }
 
-                appendAdminMessage(payload.data || {});
+                appendChatMessage({ ...(payload.data || {}), is_admin: true, author: 'Support' });
                 body.value = '';
                 status.textContent = 'Reply sent.';
             } catch (error) {
