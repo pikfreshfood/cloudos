@@ -93,6 +93,7 @@ export default function FilesScreen({ navigation }) {
   const audioPreviewPlayerRef = useRef(null);
   const resumeMusicAfterPreviewRef = useRef(false);
   const latestMusicStateRef = useRef({ isPlaying: false, currentTrack: null });
+  const pendingVideoPreviewAutoplayRef = useRef(false);
   const videoPreviewPlayer = useMemo(() => createVideoPlayer(null), []);
   const MAX_STORAGE_BYTES = getDeviceStorageLimitBytes(currentDevice);
   const MAX_STORAGE_MB = Math.round(MAX_STORAGE_BYTES / (1024 * 1024));
@@ -109,6 +110,27 @@ export default function FilesScreen({ navigation }) {
       audioPreviewPlayerRef.current?.release?.();
       videoPreviewPlayer.release();
     } catch {}
+  }, [videoPreviewPlayer]);
+
+  useEffect(() => {
+    const subscription = videoPreviewPlayer.addListener('statusChange', ({ status, error }) => {
+      if (error) {
+        pendingVideoPreviewAutoplayRef.current = false;
+        console.log('Video preview error:', error?.message || error);
+        return;
+      }
+
+      if (status === 'readyToPlay' && pendingVideoPreviewAutoplayRef.current) {
+        pendingVideoPreviewAutoplayRef.current = false;
+        try {
+          videoPreviewPlayer.play();
+        } catch (playError) {
+          console.log('Video preview autoplay retry failed:', playError?.message || playError);
+        }
+      }
+    });
+
+    return () => subscription.remove();
   }, [videoPreviewPlayer]);
 
   useEffect(() => {
@@ -857,7 +879,10 @@ export default function FilesScreen({ navigation }) {
     try {
       setIsSyncStopConfirmVisible(false);
       setSyncProgressText('Stopping sync...');
-      await stopOfflineSync();
+      await stopOfflineSync({
+        userId: currentUser?.id,
+        deviceId: currentDevice?.id,
+      });
       await refreshOfflineSyncFolders();
       setIsOfflineSyncActive(false);
       setSyncProgressText('Sync stopped.');
@@ -947,7 +972,7 @@ export default function FilesScreen({ navigation }) {
 
   const resolveMediaPreviewUri = (item) => {
     if (hasApiContext && item.remotePath) {
-      return fileService.getDownloadUrl({
+      return fileService.getPreviewUrl({
         userId: currentUser.id,
         deviceId: currentDevice.id,
         path: item.remotePath,
@@ -977,6 +1002,7 @@ export default function FilesScreen({ navigation }) {
       audioPreviewPlayerRef.current?.pause?.();
       audioPreviewPlayerRef.current?.release?.();
       audioPreviewPlayerRef.current = null;
+      pendingVideoPreviewAutoplayRef.current = false;
       videoPreviewPlayer.pause();
     } catch {}
 
@@ -1004,11 +1030,13 @@ export default function FilesScreen({ navigation }) {
       if (kind === 'video') {
         audioPreviewPlayerRef.current?.pause?.();
         videoPreviewPlayer.loop = false;
+        pendingVideoPreviewAutoplayRef.current = true;
         videoPreviewPlayer.replace(uri);
         videoPreviewPlayer.play();
         return;
       }
 
+      pendingVideoPreviewAutoplayRef.current = false;
       videoPreviewPlayer.pause();
 
       if (kind === 'audio') {
@@ -1475,7 +1503,7 @@ export default function FilesScreen({ navigation }) {
 
   const handleShareToUser = async () => {
     if (!recipientPhone.trim()) {
-      Alert.alert('Error', 'Please enter the recipient device phone number.');
+      Alert.alert('Error', 'Please enter the recipient phone number or PC ID.');
       return;
     }
 
@@ -1485,12 +1513,14 @@ export default function FilesScreen({ navigation }) {
     try {
       setIsSharing(true);
       setShareProgress(0.1);
+      const recipientInput = recipientPhone.trim();
+      const looksLikePcId = /[a-z]/i.test(recipientInput);
 
       const localRecipientDevice = resolveLocalRecipientDevice({
         accounts,
         currentUser,
         currentDevice,
-        phoneNumber: recipientPhone,
+        phoneNumber: recipientInput,
       });
 
       if (localRecipientDevice?.isCurrentDevice) {
@@ -1507,11 +1537,13 @@ export default function FilesScreen({ navigation }) {
             name: localRecipientDevice.name,
             phone_number: localRecipientDevice.phoneNumber,
           }
-        : await messageService.checkNumber({ phoneNumber: recipientPhone });
+        : looksLikePcId
+          ? { exists: true, id: null, name: 'PC device', phone_number: recipientInput }
+          : await messageService.checkNumber({ phoneNumber: recipientInput });
       setShareProgress(0.3);
 
       if (!checkResponse.exists) {
-        Alert.alert('Not found', 'The recipient device phone number does not exist on our records.');
+        Alert.alert('Not found', 'The recipient phone number or PC ID does not exist on our records.');
         setIsSharing(false);
         return;
       }
@@ -1522,9 +1554,9 @@ export default function FilesScreen({ navigation }) {
       const shareResponse = await fileService.share({
         userId: currentUser.id,
         deviceId: currentDevice.id,
-        recipientPhoneNumber: recipientPhone,
+        recipientPhoneNumber: recipientInput,
         recipientUserId: localRecipientDevice?.userId,
-        recipientDeviceId: localRecipientDevice?.deviceId,
+        recipientDeviceId: localRecipientDevice?.deviceId || (looksLikePcId ? recipientInput : null),
         recipientDeviceStorage: localRecipientDevice?.storage,
         items: itemsToShare.map(item => ({
           path: item.remotePath || item.path,
@@ -1546,9 +1578,12 @@ export default function FilesScreen({ navigation }) {
       }, 500);
 
     } catch (error) {
-      console.error('Sharing error:', error);
+      console.log('Sharing error:', error?.response?.data || error?.message || error);
       setIsSharing(false);
-      const message = error?.response?.data?.message || 'Failed to share files. Please try again.';
+      const message = error?.response?.data?.message
+        || (error?.response?.status === 404
+          ? 'The recipient phone number or PC ID was not found. Confirm the PC ID shown on the desktop login screen and try again.'
+          : 'Failed to share files. Please try again.');
       Alert.alert('Sharing failed', message);
     }
   };
@@ -2144,14 +2179,15 @@ export default function FilesScreen({ navigation }) {
         <View style={styles.modalOverlay}>
           <View style={styles.inputModalContent}>
             <Text style={styles.modalTitle}>Share to Device</Text>
-            <Text style={styles.modalSubtitle}>Enter the recipient's phone number</Text>
+            <Text style={styles.modalSubtitle}>Enter the recipient phone number or PC ID</Text>
             <TextInput
               style={styles.textInput}
               value={recipientPhone}
               onChangeText={setRecipientPhone}
-              placeholder="e.g. 08012345678"
+              placeholder="Phone number or PC ID"
               placeholderTextColor="#64748b"
-              keyboardType="phone-pad"
+              keyboardType="default"
+              autoCapitalize="none"
               autoFocus
               editable={!isSharing}
             />

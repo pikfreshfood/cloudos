@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, FlatList, ActivityIndicator, Dimensions, Modal, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
@@ -53,6 +53,7 @@ export default function VideoPlayerScreen({ navigation }) {
   const hasApiContext = !!currentUser?.id && !!currentDevice?.id;
   const player = useMemo(() => createVideoPlayer(null), []);
   const fullscreenPlayer = useMemo(() => createVideoPlayer(null), []);
+  const pendingAutoplayRef = useRef({ main: false, fullscreen: false });
 
   useEffect(() => () => {
     player.release();
@@ -60,18 +61,27 @@ export default function VideoPlayerScreen({ navigation }) {
   }, [player, fullscreenPlayer]);
 
   useEffect(() => {
-    const handleStatusChange = ({ error }) => {
+    const handleStatusChange = (target, activePlayer) => ({ status, error }) => {
       if (!error) {
         setPlayerError('');
+        if (status === 'readyToPlay' && pendingAutoplayRef.current[target]) {
+          pendingAutoplayRef.current[target] = false;
+          try {
+            activePlayer.play();
+          } catch (playError) {
+            console.log('Video autoplay retry failed:', playError?.message || playError);
+          }
+        }
         return;
       }
 
       console.error('Video playback error:', error);
+      pendingAutoplayRef.current[target] = false;
       setPlayerError('This video could not be played.');
     };
 
-    const subscription = player.addListener('statusChange', handleStatusChange);
-    const fullscreenSubscription = fullscreenPlayer.addListener('statusChange', handleStatusChange);
+    const subscription = player.addListener('statusChange', handleStatusChange('main', player));
+    const fullscreenSubscription = fullscreenPlayer.addListener('statusChange', handleStatusChange('fullscreen', fullscreenPlayer));
 
     return () => {
       subscription.remove();
@@ -114,7 +124,7 @@ export default function VideoPlayerScreen({ navigation }) {
                 id: item.id || item.path,
                 title: item.name,
                 size: item.size || 'Unknown',
-                uri: fileService.getDownloadUrl({
+                uri: fileService.getPreviewUrl({
                   userId: currentUser.id,
                   deviceId: currentDevice.id,
                   path: item.path,
@@ -177,6 +187,7 @@ export default function VideoPlayerScreen({ navigation }) {
       setIsFullscreen(false);
       fullscreenPlayer.pause();
       player.loop = true;
+      pendingAutoplayRef.current.main = true;
       player.replace(video.uri);
       player.play();
     } catch (error) {
@@ -186,6 +197,7 @@ export default function VideoPlayerScreen({ navigation }) {
   };
 
   const closeVideo = () => {
+    pendingAutoplayRef.current = { main: false, fullscreen: false };
     player.pause();
     fullscreenPlayer.pause();
     setSelectedVideo(null);
@@ -207,6 +219,7 @@ export default function VideoPlayerScreen({ navigation }) {
       const shouldContinuePlaying = player.playing;
 
       fullscreenPlayer.loop = true;
+      pendingAutoplayRef.current.fullscreen = shouldContinuePlaying;
       fullscreenPlayer.replace(selectedVideo.uri);
       fullscreenPlayer.currentTime = playbackTime;
 
@@ -230,6 +243,7 @@ export default function VideoPlayerScreen({ navigation }) {
       fullscreenPlayer.pause();
       player.currentTime = playbackTime;
       if (shouldContinuePlaying) {
+        pendingAutoplayRef.current.main = true;
         player.play();
       }
     } catch (error) {

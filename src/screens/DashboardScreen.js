@@ -39,7 +39,10 @@ export default function DashboardScreen({ navigation, route }) {
   const { selectDevice } = useOS();
   const { currentUser, logout } = useAuth();
 
-  const phones = useMemo(() => currentUser?.devices || [], [currentUser]);
+  const phones = useMemo(
+    () => (currentUser?.devices || []).filter((device) => ['android', 'ios'].includes(String(device?.os || '').toLowerCase())),
+    [currentUser]
+  );
 
   const supportErrorMessage = (error) => (
     error?.response?.data?.message

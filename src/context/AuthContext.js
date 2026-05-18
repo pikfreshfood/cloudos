@@ -11,12 +11,15 @@ const SESSION_PATH = Platform.OS !== 'web' ? `${FileSystem.documentDirectory}ses
 const USERS_ROOT_PATH = Platform.OS !== 'web' ? `${FileSystem.documentDirectory}users/` : '';
 const RESET_MARKER_PATH = Platform.OS !== 'web' ? `${FileSystem.documentDirectory}reset-all-complete.json` : '';
 const FORCE_RESET_ON_NEXT_LAUNCH = true;
-const DEFAULT_DEVICE_STORAGE_MB = 100;
+const DEFAULT_DEVICE_STORAGE_MB = 200;
 const LEGACY_DEFAULT_DEVICE_STORAGE_MB = 500;
+const PREVIOUS_DEFAULT_DEVICE_STORAGE_MB = 100;
 
 const DEVICE_TEMPLATES = [
   { os: 'android', name: 'Android Cloud OS', storage: String(DEFAULT_DEVICE_STORAGE_MB), isFree: true },
   { os: 'ios', name: 'iPhone Cloud OS', storage: String(DEFAULT_DEVICE_STORAGE_MB), isFree: true },
+  { os: 'windows', name: 'Windows Cloud OS', storage: String(DEFAULT_DEVICE_STORAGE_MB), isFree: true },
+  { os: 'macos', name: 'Mac Cloud OS', storage: String(DEFAULT_DEVICE_STORAGE_MB), isFree: true },
 ];
 
 const slugifyEmail = (email) => email.trim().toLowerCase();
@@ -63,6 +66,32 @@ const buildDevicePhoneNumber = ({ accountPhoneNumber, deviceId, deviceIndex }) =
   return `${prefix}${suffix}`;
 };
 
+const normalizeDeviceOs = (value) => {
+  const os = String(value || '').trim().toLowerCase();
+  if (['iphone', 'ios'].includes(os)) return 'ios';
+  if (['mac', 'macos', 'mac os', 'osx'].includes(os)) return 'macos';
+  if (['windows', 'windows os', 'window', 'win', 'pc'].includes(os)) return 'windows';
+  return os || 'android';
+};
+
+const isMobileDevice = (device) => ['android', 'ios'].includes(normalizeDeviceOs(device?.os));
+
+const normalizeAccountDevices = (devices = []) => (
+  devices.map((device) => ({
+    ...device,
+    id: String(device.id || device.device_id || device.deviceId || ''),
+    os: normalizeDeviceOs(device.os),
+    name: device.name || 'Cloud OS Device',
+    phoneNumber: isMobileDevice(device)
+      ? normalizeDigits(device.phoneNumber || device.phone_number)
+      : String(device.phoneNumber || device.phone_number || ''),
+    storage: normalizeDeviceStorage(device),
+    storageExpiresAt: normalizeStorageExpiry(device),
+    createdAt: device.createdAt || device.created_at || new Date().toISOString(),
+    updatedAt: device.updatedAt || device.updated_at || null,
+  })).filter((device) => device.id)
+);
+
 const normalizeDeviceStorage = (device) => {
   const storageNumber = Number(device?.storage);
 
@@ -70,7 +99,10 @@ const normalizeDeviceStorage = (device) => {
     return String(DEFAULT_DEVICE_STORAGE_MB);
   }
 
-  if (!device?.upgradedAt && storageNumber === LEGACY_DEFAULT_DEVICE_STORAGE_MB) {
+  if (
+    !device?.upgradedAt &&
+    (storageNumber === LEGACY_DEFAULT_DEVICE_STORAGE_MB || storageNumber === PREVIOUS_DEFAULT_DEVICE_STORAGE_MB)
+  ) {
     return String(DEFAULT_DEVICE_STORAGE_MB);
   }
 
@@ -98,13 +130,16 @@ const normalizeStorageExpiry = (device) => {
 const attachDevicePhoneNumbers = (devices, accountPhoneNumber) => (
   (devices || []).map((device, index) => ({
     ...device,
+    os: normalizeDeviceOs(device.os),
     storage: normalizeDeviceStorage(device),
     storageExpiresAt: normalizeStorageExpiry(device),
-    phoneNumber: normalizeDigits(device.phoneNumber) || buildDevicePhoneNumber({
-      accountPhoneNumber,
-      deviceId: device.id,
-      deviceIndex: index,
-    }),
+    phoneNumber: isMobileDevice(device)
+      ? normalizeDigits(device.phoneNumber) || buildDevicePhoneNumber({
+        accountPhoneNumber,
+        deviceId: device.id,
+        deviceIndex: index,
+      })
+      : String(device.phoneNumber || ''),
   }))
 );
 const getApiErrorMessage = (error, fallbackMessage) => {
@@ -203,8 +238,10 @@ export const AuthProvider = ({ children }) => {
       profilePicture: resolvedProfilePicture,
       createdAt: user.created_at || existingAccount?.createdAt || new Date().toISOString(),
       devices: attachDevicePhoneNumbers(
-        Array.isArray(existingAccount?.devices) && existingAccount.devices.length
-          ? existingAccount.devices
+        Array.isArray(user.devices) && user.devices.length
+          ? normalizeAccountDevices(user.devices)
+          : Array.isArray(existingAccount?.devices) && existingAccount.devices.length
+          ? normalizeAccountDevices(existingAccount.devices)
           : createDefaultDevices(user.phone_number || existingAccount?.phoneNumber || ''),
         user.phone_number || existingAccount?.phoneNumber || ''
       ),

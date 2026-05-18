@@ -1,9 +1,10 @@
 export const normalizePhoneDigits = (value) => String(value || '').replace(/\D+/g, '');
 
 export const resolveLocalRecipientDevice = ({ accounts, currentUser, currentDevice, phoneNumber }) => {
+  const inputText = String(phoneNumber || '').trim().toLowerCase();
   const inputDigits = normalizePhoneDigits(phoneNumber);
 
-  if (!inputDigits) {
+  if (!inputDigits && !inputText) {
     return null;
   }
 
@@ -18,7 +19,8 @@ export const resolveLocalRecipientDevice = ({ accounts, currentUser, currentDevi
 
     const device = account.devices.find((candidate) => {
       const deviceDigits = normalizePhoneDigits(candidate.phoneNumber);
-      return deviceDigits && deviceDigits === inputDigits;
+      const deviceId = String(candidate.id || candidate.device_id || candidate.deviceId || '').trim().toLowerCase();
+      return (deviceDigits && deviceDigits === inputDigits) || (inputText && deviceId === inputText);
     });
 
     if (device) {

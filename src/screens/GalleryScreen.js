@@ -34,7 +34,11 @@ export default function GalleryScreen({ navigation }) {
           userId: currentUser.id,
           deviceId: currentDeviceId,
         });
-        setImages(Array.isArray(response.images) ? response.images : []);
+        const remoteImages = (Array.isArray(response.images) ? response.images : []).map((image) => ({
+          ...image,
+          url: image.path ? mediaService.getStreamUrl({ path: image.path }) : image.url,
+        }));
+        setImages(remoteImages);
         return;
       }
 

@@ -355,6 +355,7 @@ export const fileService = {
     return response.data;
   },
   getDownloadUrl: ({ userId, deviceId, path }) => (`${API_URL}files/download?user_id=${encodeURIComponent(userId)}&device_id=${encodeURIComponent(deviceId)}&path=${encodeURIComponent(path)}`),
+  getPreviewUrl: ({ userId, deviceId, path }) => (`${API_URL}files/preview?user_id=${encodeURIComponent(userId)}&device_id=${encodeURIComponent(deviceId)}&path=${encodeURIComponent(path)}`),
   createSyncFolderStructure: async ({ userId, deviceId, folderPath }) => {
     const response = await api.post('files/sync-folder-structure', { user_id: userId, device_id: deviceId, folder_path: folderPath });
     return response.data;
@@ -390,6 +391,7 @@ export const mediaService = {
     const response = await api.get('media/images', { params: { user_id: userId, device_id: deviceId } });
     return response.data;
   },
+  getStreamUrl: ({ path }) => (`${API_URL}media/stream?path=${encodeURIComponent(path)}`),
   deleteMedia: async ({ path }) => {
     const response = await api.delete('media', { data: { path } });
     return response.data;
@@ -427,6 +429,43 @@ export const mediaService = {
       duration_ms: Math.max(0, Math.round(Number(durationMs) || 0)),
       playback_status: playbackStatus,
       metadata: metadata || {},
+    });
+    return response.data;
+  },
+};
+
+export const syncStateService = {
+  save: async ({
+    userId,
+    deviceId = null,
+    syncType,
+    status = 'idle',
+    progress = 0,
+    errorMessage = null,
+    lastRunAt = null,
+    nextRunAt = null,
+    metadata = {},
+  }) => {
+    const response = await api.post('sync-states', {
+      user_id: Number(userId) || userId,
+      ...(deviceId ? { device_id: deviceId } : {}),
+      sync_type: syncType,
+      status,
+      progress: Math.max(0, Math.min(100, Math.round(Number(progress) || 0))),
+      error_message: errorMessage,
+      last_run_at: lastRunAt,
+      next_run_at: nextRunAt,
+      metadata: metadata || {},
+    });
+    return response.data;
+  },
+  get: async ({ userId, deviceId = null, syncType }) => {
+    const response = await api.get('sync-states/show', {
+      params: {
+        user_id: Number(userId) || userId,
+        sync_type: syncType,
+        ...(deviceId ? { device_id: deviceId } : {}),
+      },
     });
     return response.data;
   },

@@ -2,10 +2,11 @@ import * as BackgroundTask from 'expo-background-task';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as TaskManager from 'expo-task-manager';
 import { Platform } from 'react-native';
-import { fileService } from '../services/api';
+import { fileService, syncStateService } from '../services/api';
 import { DEFAULT_DEVICE_STORAGE_MB } from './deviceStorage';
 
 export const OFFLINE_SYNC_TASK_NAME = 'cloudos-offline-folder-sync';
+export const OFFLINE_SYNC_STATE_TYPE = 'offline_folder';
 
 const SAF = FileSystem.StorageAccessFramework || null;
 const NETWORK_RETRY_DELAY_MS = 10000;
@@ -187,6 +188,82 @@ export const writeOfflineSyncState = async (state) => {
   }));
 };
 
+const syncScopesForState = (state, fallback = {}) => {
+  const scopes = new Map();
+  if (fallback.userId && fallback.deviceId) {
+    scopes.set(`${fallback.userId}:${fallback.deviceId}`, {
+      userId: fallback.userId,
+      deviceId: fallback.deviceId,
+    });
+  }
+
+  for (const folder of state.folders || []) {
+    if (!folder.userId || !folder.deviceId) continue;
+    scopes.set(`${folder.userId}:${folder.deviceId}`, {
+      userId: folder.userId,
+      deviceId: folder.deviceId,
+    });
+  }
+
+  return [...scopes.values()];
+};
+
+const foldersForSyncScope = (state, scope) => (
+  (state.folders || []).filter((folder) => (
+    String(folder.userId) === String(scope.userId) &&
+    String(folder.deviceId) === String(scope.deviceId)
+  ))
+);
+
+const syncMetadataForScope = (state, scope) => ({
+  sync_active: !!state.syncActive,
+  folders: foldersForSyncScope(state, scope).map((folder) => ({
+    id: folder.id,
+    name: folder.name,
+    enabled: !!folder.enabled,
+    status: folder.status,
+    last_synced_at: folder.lastSyncedAt || null,
+    updated_at: folder.updatedAt || null,
+  })),
+  last_result: state.lastResult || null,
+  retry_reason: state.retryReason || null,
+});
+
+const saveRemoteOfflineSyncState = async (state, {
+  status,
+  progress = 0,
+  errorMessage = null,
+  fallbackUserId = null,
+  fallbackDeviceId = null,
+} = {}) => {
+  const scopes = syncScopesForState(state, {
+    userId: fallbackUserId,
+    deviceId: fallbackDeviceId,
+  });
+
+  await Promise.all(scopes.map(async (scope) => {
+    try {
+      await syncStateService.save({
+        userId: scope.userId,
+        deviceId: scope.deviceId,
+        syncType: OFFLINE_SYNC_STATE_TYPE,
+        status,
+        progress,
+        errorMessage,
+        lastRunAt: state.lastRunAt,
+        metadata: syncMetadataForScope(state, scope),
+      });
+    } catch (error) {
+      console.log('Remote offline sync state update failed:', error?.message || error);
+    }
+  }));
+};
+
+const isOfflineSyncStillActive = async () => {
+  const latestState = await readOfflineSyncState();
+  return hasEnabledSyncFolders(latestState);
+};
+
 export const getDeviceSyncFolders = async ({ userId, deviceId }) => {
   const state = await readOfflineSyncState();
 
@@ -232,6 +309,7 @@ export const addOfflineSyncFolder = async ({ folderPath, baseDir, userId, device
 
   await writeOfflineSyncState(state);
   if (syncActive) {
+    await saveRemoteOfflineSyncState(state, { status: 'active' });
     await registerOfflineSyncTaskAsync();
   }
 
@@ -245,6 +323,9 @@ export const removeOfflineSyncFolder = async (folderId) => {
     state.syncActive = false;
   }
   await writeOfflineSyncState(state);
+  await saveRemoteOfflineSyncState(state, {
+    status: state.syncActive ? 'active' : 'stopped',
+  });
 
   return state;
 };
@@ -268,6 +349,7 @@ export const enableOfflineSyncFolders = async ({ folderIds = null } = {}) => {
   });
 
   await writeOfflineSyncState(state);
+  await saveRemoteOfflineSyncState(state, { status: 'active' });
   await registerOfflineSyncTaskAsync();
 
   return state;
@@ -494,9 +576,14 @@ export const runOfflineFolderSync = async ({ folderIds = null, onProgress } = {}
 
   state.lastRunAt = new Date().toISOString();
   state.lastError = null;
+  await writeOfflineSyncState(state);
+  if (folders.length > 0) {
+    await saveRemoteOfflineSyncState(state, { status: 'syncing', progress: 0 });
+  }
 
   for (const folder of folders) {
-    if (syncCancelled) {
+    if (syncCancelled || !(await isOfflineSyncStillActive())) {
+      syncCancelled = true;
       result.cancelled = true;
       break;
     }
@@ -523,6 +610,7 @@ export const runOfflineFolderSync = async ({ folderIds = null, onProgress } = {}
           updatedAt: new Date().toISOString(),
         };
         await writeOfflineSyncState(state);
+        await saveRemoteOfflineSyncState(state, { status: 'syncing', progress: 0 });
       }
 
       let cloudUsage = await getCloudUsage({
@@ -537,7 +625,8 @@ export const runOfflineFolderSync = async ({ folderIds = null, onProgress } = {}
         : await collectFiles(folder.path);
 
       for (const file of files) {
-        if (syncCancelled) {
+        if (syncCancelled || !(await isOfflineSyncStillActive())) {
+          syncCancelled = true;
           result.cancelled = true;
           break;
         }
@@ -649,8 +738,23 @@ export const runOfflineFolderSync = async ({ folderIds = null, onProgress } = {}
   }
 
   result.lastError = result.lastError || state.lastError;
+  if (result.cancelled) {
+    const stoppedState = await readOfflineSyncState();
+    stoppedState.lastResult = result;
+    stoppedState.lastError = null;
+    await writeOfflineSyncState(stoppedState);
+    await saveRemoteOfflineSyncState(stoppedState, { status: 'stopped', progress: 0 });
+    syncCancelled = false;
+    return result;
+  }
+
   state.lastResult = result;
   await writeOfflineSyncState(state);
+  await saveRemoteOfflineSyncState(state, {
+    status: shouldRetrySyncResult(result) ? 'waiting' : 'synced',
+    progress: 100,
+    errorMessage: result.lastError,
+  });
   syncCancelled = false;
 
   if (shouldRetrySyncResult(result)) {
@@ -740,8 +844,14 @@ const disableAllSyncFolders = async () => {
   return state;
 };
 
-export const stopOfflineSync = async () => {
+export const stopOfflineSync = async ({ userId = null, deviceId = null } = {}) => {
   cancelOfflineSync();
   await unregisterOfflineSyncTaskAsync();
-  await disableAllSyncFolders();
+  const state = await disableAllSyncFolders();
+  await saveRemoteOfflineSyncState(state, {
+    status: 'stopped',
+    progress: 0,
+    fallbackUserId: userId,
+    fallbackDeviceId: deviceId,
+  });
 };
