@@ -170,23 +170,24 @@ class AuthController extends Controller
 
     private function mapUser(User $user): array
     {
-        $this->ensureDefaultDevices($user);
-        $devices = DB::table('devices')
-            ->where('user_id', $user->id)
-            ->orderBy('created_at')
-            ->get()
-            ->map(fn ($row) => [
-                'device_id' => $row->device_id,
-                'id' => $row->device_id,
-                'name' => $row->name,
-                'os' => $row->os,
-                'phone_number' => $row->phone_number,
-                'storage' => (int) $row->storage,
-                'storage_expires_at' => $row->storage_expires_at ?? null,
-                'created_at' => $row->created_at,
-                'updated_at' => $row->updated_at,
-            ])
-            ->values();
+        try {
+            $this->ensureDefaultDevices($user);
+        } catch (Throwable) {
+            // Login and registration must still work if the devices table is behind the app version.
+        }
+
+        try {
+            $devices = DB::table('devices')
+                ->where('user_id', $user->id)
+                ->orderBy('created_at')
+                ->get()
+                ->map(fn ($row) => $this->mapDeviceRow($row))
+                ->values();
+        } catch (Throwable) {
+            $devices = collect();
+        }
+
+        $devices = $this->devicesWithFallbacks($user, $devices);
 
         return [
             'id' => (string) $user->id,
@@ -198,6 +199,58 @@ class AuthController extends Controller
             'avatar_url' => $user->avatar_url,
             'created_at' => optional($user->created_at)?->toISOString(),
             'devices' => $devices,
+        ];
+    }
+
+    private function mapDeviceRow(object $row): array
+    {
+        return [
+            'device_id' => $row->device_id,
+            'id' => $row->device_id,
+            'name' => $row->name,
+            'os' => $row->os,
+            'phone_number' => $row->phone_number,
+            'storage' => (int) $row->storage,
+            'storage_expires_at' => $row->storage_expires_at ?? null,
+            'created_at' => $row->created_at,
+            'updated_at' => $row->updated_at,
+        ];
+    }
+
+    private function devicesWithFallbacks(User $user, $devices)
+    {
+        $nextDevices = collect($devices)->values();
+
+        foreach (self::DEFAULT_DEVICE_TEMPLATES as $os => $template) {
+            $hasDevice = $nextDevices->contains(
+                fn ($device) => $this->normalizeOs((string) ($device['os'] ?? '')) === $os
+            );
+
+            if (! $hasDevice) {
+                $nextDevices->push($this->fallbackDevice($user, $os, $template));
+            }
+        }
+
+        return $nextDevices->values();
+    }
+
+    private function fallbackDevice(User $user, string $os, array $template): array
+    {
+        $deviceId = $this->fallbackDeviceId((int) $user->id, $template['id_prefix']);
+        $phoneNumber = $template['phone']
+            ? $this->fallbackDevicePhoneNumber($user, $os)
+            : $deviceId;
+
+        return [
+            'device_id' => $deviceId,
+            'id' => $deviceId,
+            'name' => $template['name'],
+            'os' => $os,
+            'phone_number' => $phoneNumber,
+            'storage' => self::DEFAULT_DEVICE_STORAGE_MB,
+            'storage_expires_at' => null,
+            'created_at' => null,
+            'updated_at' => null,
         ];
     }
 
@@ -255,6 +308,13 @@ class AuthController extends Controller
         return $candidate;
     }
 
+    private function fallbackDeviceId(int $userId, string $prefix): string
+    {
+        $seed = abs(crc32($prefix . ':' . $userId));
+
+        return sprintf('%s-%s-%04d', $prefix, str_pad((string) $userId, 5, '0', STR_PAD_LEFT), $seed % 10000);
+    }
+
     private function generateUniqueDevicePhoneNumber(User $user, string $os): string
     {
         $baseDigits = $this->normalizePhoneNumber((string) $user->phone_number);
@@ -274,6 +334,19 @@ class AuthController extends Controller
         }
 
         return $prefix . (string) random_int(1000, 9999);
+    }
+
+    private function fallbackDevicePhoneNumber(User $user, string $os): string
+    {
+        $baseDigits = $this->normalizePhoneNumber((string) $user->phone_number);
+        $targetLength = max(10, min(15, strlen($baseDigits) ?: 11));
+        $prefixLength = max(6, $targetLength - 4);
+        $prefix = str_pad($baseDigits ?: '70000000000', $prefixLength, '0');
+        $prefix = substr($prefix, 0, $prefixLength);
+        $seed = abs(crc32($user->id . ':' . $os . ':' . $baseDigits . ':fallback'));
+        $suffix = str_pad((string) ($seed % 10000), 4, '0', STR_PAD_LEFT);
+
+        return $prefix . $suffix;
     }
 
     private function normalizePhoneNumber(string $phoneNumber): string
