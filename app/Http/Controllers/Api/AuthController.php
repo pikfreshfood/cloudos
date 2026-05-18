@@ -218,7 +218,7 @@ class AuthController extends Controller
             $deviceId = $this->generateUniqueDeviceId((int) $user->id, $template['id_prefix']);
             $phoneNumber = $template['phone']
                 ? $this->generateUniqueDevicePhoneNumber($user, $os)
-                : null;
+                : $deviceId;
 
             DB::table('devices')->insert([
                 'user_id' => $user->id,

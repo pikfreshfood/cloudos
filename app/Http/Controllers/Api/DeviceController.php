@@ -32,7 +32,12 @@ class DeviceController extends Controller
         $synced = 0;
 
         foreach ($validated['devices'] as $device) {
-            $phoneNumber = preg_replace('/\D+/', '', (string) ($device['phone_number'] ?? '')) ?? '';
+            $os = $this->normalizeOs((string) ($device['os'] ?? ''));
+            $phoneNumber = $this->deviceIdentifierForPhoneColumn(
+                (string) $device['device_id'],
+                $os,
+                (string) ($device['phone_number'] ?? '')
+            );
 
             DB::table('devices')->updateOrInsert(
                 [
@@ -41,8 +46,8 @@ class DeviceController extends Controller
                 ],
                 [
                     'name' => $device['name'] ?? null,
-                    'os' => $device['os'] ?? null,
-                    'phone_number' => $phoneNumber !== '' ? $phoneNumber : null,
+                    'os' => $os ?: ($device['os'] ?? null),
+                    'phone_number' => $phoneNumber,
                     'storage' => (int) ($device['storage'] ?? self::DEFAULT_DEVICE_STORAGE_MB),
                     'storage_expires_at' => $device['storage_expires_at'] ?? null,
                     'updated_at' => $now,
@@ -57,6 +62,29 @@ class DeviceController extends Controller
             'message' => "Synced {$synced} device(s).",
             'synced' => $synced,
         ]);
+    }
+
+    private function normalizeOs(string $os): string
+    {
+        $value = strtolower(trim($os));
+
+        return match ($value) {
+            'iphone', 'ios' => 'ios',
+            'mac', 'macos', 'mac os', 'macosx', 'osx' => 'macos',
+            'windows', 'window', 'windows os', 'win', 'pc' => 'windows',
+            default => $value,
+        };
+    }
+
+    private function deviceIdentifierForPhoneColumn(string $deviceId, string $os, string $phoneNumber): string
+    {
+        if (in_array($os, ['windows', 'macos'], true)) {
+            return $deviceId;
+        }
+
+        $digits = preg_replace('/\D+/', '', $phoneNumber) ?? '';
+
+        return $digits !== '' ? $digits : $deviceId;
     }
 
     public function index(Request $request): JsonResponse
