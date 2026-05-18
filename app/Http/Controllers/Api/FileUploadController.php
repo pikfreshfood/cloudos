@@ -15,7 +15,7 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class FileUploadController extends Controller
 {
-    private const DEFAULT_DEVICE_STORAGE_MB = 100;
+    private const DEFAULT_DEVICE_STORAGE_MB = 200;
 
     public function index(Request $request): JsonResponse
     {

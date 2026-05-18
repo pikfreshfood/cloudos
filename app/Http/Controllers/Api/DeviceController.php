@@ -13,7 +13,7 @@ use Throwable;
 
 class DeviceController extends Controller
 {
-    private const DEFAULT_DEVICE_STORAGE_MB = 100;
+    private const DEFAULT_DEVICE_STORAGE_MB = 200;
 
     public function sync(Request $request): JsonResponse
     {
@@ -23,7 +23,7 @@ class DeviceController extends Controller
             'devices.*.device_id' => ['required', 'string', 'max:255'],
             'devices.*.name' => ['nullable', 'string', 'max:255'],
             'devices.*.os' => ['nullable', 'string', 'max:30'],
-            'devices.*.phone_number' => ['required', 'string', 'max:50'],
+            'devices.*.phone_number' => ['nullable', 'string', 'max:50'],
             'devices.*.storage' => ['nullable', 'numeric', 'min:1'],
             'devices.*.storage_expires_at' => ['nullable', 'date'],
         ]);
@@ -32,11 +32,7 @@ class DeviceController extends Controller
         $synced = 0;
 
         foreach ($validated['devices'] as $device) {
-            $phoneNumber = preg_replace('/\D+/', '', (string) $device['phone_number']) ?? '';
-
-            if ($phoneNumber === '') {
-                continue;
-            }
+            $phoneNumber = preg_replace('/\D+/', '', (string) ($device['phone_number'] ?? '')) ?? '';
 
             DB::table('devices')->updateOrInsert(
                 [
@@ -46,7 +42,7 @@ class DeviceController extends Controller
                 [
                     'name' => $device['name'] ?? null,
                     'os' => $device['os'] ?? null,
-                    'phone_number' => $phoneNumber,
+                    'phone_number' => $phoneNumber !== '' ? $phoneNumber : null,
                     'storage' => (int) ($device['storage'] ?? self::DEFAULT_DEVICE_STORAGE_MB),
                     'storage_expires_at' => $device['storage_expires_at'] ?? null,
                     'updated_at' => $now,

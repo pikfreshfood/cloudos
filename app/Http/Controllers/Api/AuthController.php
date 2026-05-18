@@ -15,6 +15,15 @@ use Throwable;
 
 class AuthController extends Controller
 {
+    private const DEFAULT_DEVICE_STORAGE_MB = 200;
+
+    private const DEFAULT_DEVICE_TEMPLATES = [
+        'android' => ['name' => 'Android Cloud OS', 'phone' => true, 'id_prefix' => 'android'],
+        'ios' => ['name' => 'iPhone Cloud OS', 'phone' => true, 'id_prefix' => 'iphone'],
+        'windows' => ['name' => 'Windows Cloud OS', 'phone' => false, 'id_prefix' => 'win-pc'],
+        'macos' => ['name' => 'Mac Cloud OS', 'phone' => false, 'id_prefix' => 'mac-pc'],
+    ];
+
     public function register(Request $request): JsonResponse
     {
         $validated = $request->validate([
@@ -161,6 +170,24 @@ class AuthController extends Controller
 
     private function mapUser(User $user): array
     {
+        $this->ensureDefaultDevices($user);
+        $devices = DB::table('devices')
+            ->where('user_id', $user->id)
+            ->orderBy('created_at')
+            ->get()
+            ->map(fn ($row) => [
+                'device_id' => $row->device_id,
+                'id' => $row->device_id,
+                'name' => $row->name,
+                'os' => $row->os,
+                'phone_number' => $row->phone_number,
+                'storage' => (int) $row->storage,
+                'storage_expires_at' => $row->storage_expires_at ?? null,
+                'created_at' => $row->created_at,
+                'updated_at' => $row->updated_at,
+            ])
+            ->values();
+
         return [
             'id' => (string) $user->id,
             'name' => $user->name,
@@ -170,7 +197,83 @@ class AuthController extends Controller
             'initials' => $user->initials,
             'avatar_url' => $user->avatar_url,
             'created_at' => optional($user->created_at)?->toISOString(),
+            'devices' => $devices,
         ];
+    }
+
+    private function ensureDefaultDevices(User $user): void
+    {
+        $existingDevices = DB::table('devices')
+            ->where('user_id', $user->id)
+            ->get();
+        $existingByOs = $existingDevices
+            ->keyBy(fn ($device) => $this->normalizeOs((string) $device->os));
+        $now = now();
+
+        foreach (self::DEFAULT_DEVICE_TEMPLATES as $os => $template) {
+            if ($existingByOs->has($os)) {
+                continue;
+            }
+
+            $deviceId = $this->generateUniqueDeviceId((int) $user->id, $template['id_prefix']);
+            $phoneNumber = $template['phone']
+                ? $this->generateUniqueDevicePhoneNumber($user, $os)
+                : null;
+
+            DB::table('devices')->insert([
+                'user_id' => $user->id,
+                'device_id' => $deviceId,
+                'name' => $template['name'],
+                'os' => $os,
+                'phone_number' => $phoneNumber,
+                'storage' => self::DEFAULT_DEVICE_STORAGE_MB,
+                'storage_expires_at' => null,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+        }
+    }
+
+    private function normalizeOs(string $os): string
+    {
+        $value = strtolower(trim($os));
+
+        return match ($value) {
+            'iphone', 'ios' => 'ios',
+            'mac', 'macos', 'mac os', 'macosx', 'osx' => 'macos',
+            'windows', 'window', 'windows os', 'win', 'pc' => 'windows',
+            default => $value ?: 'android',
+        };
+    }
+
+    private function generateUniqueDeviceId(int $userId, string $prefix): string
+    {
+        do {
+            $candidate = sprintf('%s-%s-%04d', $prefix, str_pad((string) $userId, 5, '0', STR_PAD_LEFT), random_int(1000, 9999));
+        } while (DB::table('devices')->where('device_id', $candidate)->exists());
+
+        return $candidate;
+    }
+
+    private function generateUniqueDevicePhoneNumber(User $user, string $os): string
+    {
+        $baseDigits = $this->normalizePhoneNumber((string) $user->phone_number);
+        $targetLength = max(10, min(15, strlen($baseDigits) ?: 11));
+        $prefixLength = max(6, $targetLength - 4);
+        $prefix = str_pad($baseDigits ?: '70000000000', $prefixLength, '0');
+        $prefix = substr($prefix, 0, $prefixLength);
+        $seed = abs(crc32($user->id . ':' . $os . ':' . $baseDigits));
+
+        for ($attempt = 0; $attempt < 1000; $attempt++) {
+            $suffix = str_pad((string) (($seed + $attempt) % 10000), 4, '0', STR_PAD_LEFT);
+            $candidate = $prefix . $suffix;
+
+            if (! DB::table('devices')->where('phone_number', $candidate)->exists()) {
+                return $candidate;
+            }
+        }
+
+        return $prefix . (string) random_int(1000, 9999);
     }
 
     private function normalizePhoneNumber(string $phoneNumber): string
