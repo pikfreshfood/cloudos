@@ -61,6 +61,7 @@ Route::delete('/messages', [MessageController::class, 'destroy']);
 
 Route::post('/files/upload', [FileUploadController::class, 'store']);
 Route::post('/files/upload-base64', [FileUploadController::class, 'storeBase64']);
+Route::post('/files/storage-status', [FileUploadController::class, 'storageStatus']);
 Route::get('/files', [FileUploadController::class, 'index']);
 Route::post('/files/html-companion', [FileUploadController::class, 'saveHtmlCompanion']);
 Route::post('/files/folders', [FileUploadController::class, 'createFolder']);

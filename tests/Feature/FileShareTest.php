@@ -122,6 +122,25 @@ class FileShareTest extends TestCase
         Storage::disk('local')->assertExists('uploads/cloud-user/android-device/Camera/photo.jpg');
     }
 
+    public function test_file_storage_status_reports_usage_and_preflight_result(): void
+    {
+        Storage::fake('local');
+        Storage::disk('local')->put('uploads/cloud-user/android-device/document.txt', str_repeat('a', 1024));
+
+        $response = $this->postJson('/api/files/storage-status', [
+            'user_id' => 'cloud-user',
+            'device_id' => 'android-device',
+            'incoming_bytes' => 2048,
+        ]);
+
+        $response->assertOk()
+            ->assertJsonPath('used_space', 1024)
+            ->assertJsonPath('storage_limit', 200 * 1024 * 1024)
+            ->assertJsonPath('remaining_space', (200 * 1024 * 1024) - 1024)
+            ->assertJsonPath('incoming_bytes', 2048)
+            ->assertJsonPath('can_store', true);
+    }
+
     public function test_file_manager_can_create_folder(): void
     {
         Storage::fake('local');

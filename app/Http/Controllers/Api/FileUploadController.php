@@ -194,6 +194,36 @@ class FileUploadController extends Controller
         ], 201);
     }
 
+    public function storageStatus(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'user_id' => ['required', 'string', 'max:255'],
+            'device_id' => ['required', 'string', 'max:255'],
+            'incoming_bytes' => ['nullable', 'integer', 'min:0'],
+        ]);
+
+        $incomingBytes = (int) ($validated['incoming_bytes'] ?? 0);
+        $storageCheck = $this->canStoreIncomingBytes(
+            $validated['user_id'],
+            $validated['device_id'],
+            $incomingBytes
+        );
+        $remainingSpace = max(0, $storageCheck['storage_limit'] - $storageCheck['used_space']);
+
+        return response()->json([
+            'user_id' => $validated['user_id'],
+            'device_id' => $validated['device_id'],
+            'used_space' => $storageCheck['used_space'],
+            'storage_limit' => $storageCheck['storage_limit'],
+            'remaining_space' => $remainingSpace,
+            'incoming_bytes' => $incomingBytes,
+            'can_store' => $storageCheck['ok'],
+            'used_percent' => $storageCheck['storage_limit'] > 0
+                ? round(($storageCheck['used_space'] / $storageCheck['storage_limit']) * 100, 2)
+                : 0,
+        ]);
+    }
+
     public function createFolder(Request $request): JsonResponse
     {
         $validated = $request->validate([
