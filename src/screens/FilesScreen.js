@@ -808,7 +808,8 @@ export default function FilesScreen({ navigation }) {
             result.failedFiles > 0 ? `${result.failedFiles} file(s)` : null,
             result.failedFolders > 0 ? `${result.failedFolders} folder(s)` : null,
           ].filter(Boolean).join(' and ');
-          const message = `${failedParts} failed to sync. ${result.uploadedFiles} file(s) uploaded. Background sync remains active.`;
+          const reason = result.lastError ? ` Last error: ${result.lastError}` : '';
+          const message = `${failedParts} failed to sync. ${result.uploadedFiles} file(s) uploaded. Background sync remains active.${reason}`;
           setSyncProgressText(message);
           Alert.alert('Sync incomplete', message);
         } else {

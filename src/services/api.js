@@ -261,6 +261,8 @@ export const fileService = {
       user_id: userId,
       device_id: deviceId,
       folder_path: folderPath,
+    }, {
+      timeout: 120000,
     });
 
     onUploadProgress?.({ loaded: 3, total: 3 });

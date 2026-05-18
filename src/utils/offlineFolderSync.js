@@ -405,18 +405,18 @@ const uploadSyncedFile = async ({ folder, file, uploadFolderPath }) => {
     folderPath: uploadFolderPath,
   };
 
-  if (!isSafFile) {
-    return fileService.upload(payload);
-  }
-
   try {
-    return await fileService.uploadBase64(payload);
+    return await fileService.upload(payload);
   } catch (error) {
     if (isStorageFullError(error)) {
       throw error;
     }
 
-    return fileService.upload(payload);
+    if (!isSafFile && isNetworkSyncError(error)) {
+      throw error;
+    }
+
+    return fileService.uploadBase64(payload);
   }
 };
 
@@ -459,6 +459,7 @@ export const runOfflineFolderSync = async ({ folderIds = null, onProgress } = {}
     storageFull: false,
     networkError: false,
     cancelled: false,
+    lastError: null,
   };
 
   state.lastRunAt = new Date().toISOString();
@@ -557,6 +558,7 @@ export const runOfflineFolderSync = async ({ folderIds = null, onProgress } = {}
             folderNetworkError = true;
           }
           state.lastError = fileUploadErrorMessage(file, error);
+          result.lastError = state.lastError;
 
           if (folderNetworkError) {
             break;
@@ -597,10 +599,12 @@ export const runOfflineFolderSync = async ({ folderIds = null, onProgress } = {}
       }
 
       state.lastError = uploadErrorMessage(error);
+      result.lastError = state.lastError;
       await writeOfflineSyncState(state);
     }
   }
 
+  result.lastError = result.lastError || state.lastError;
   state.lastResult = result;
   await writeOfflineSyncState(state);
   syncCancelled = false;
