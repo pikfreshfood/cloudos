@@ -12,6 +12,8 @@ use Illuminate\Support\Facades\Schema;
 
 class ContactController extends Controller
 {
+    private const DEFAULT_DEVICE_STORAGE_MB = 100;
+
     public function index(Request $request): JsonResponse
     {
         $validated = $request->validate([
@@ -250,7 +252,7 @@ class ContactController extends Controller
             'name' => $device->name,
             'os' => $device->os,
             'phone_number' => $device->phone_number,
-            'storage' => (int) ($device->storage ?? 500),
+            'storage' => (int) ($device->storage ?? self::DEFAULT_DEVICE_STORAGE_MB),
         ];
     }
 }

@@ -15,6 +15,8 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class FileUploadController extends Controller
 {
+    private const DEFAULT_DEVICE_STORAGE_MB = 100;
+
     public function index(Request $request): JsonResponse
     {
         $validated = $request->validate([
@@ -645,10 +647,10 @@ class FileUploadController extends Controller
 
         $recipientUsed = $this->getDeviceUsedSpace($recipient->id, $recipientDeviceId);
         
-        // Default limit to 500MB if no device record exists
+        // Default limit if no device record exists.
         $recipientLimit = isset($validated['recipient_device_storage'])
             ? (int)$validated['recipient_device_storage'] * 1024 * 1024
-            : 500 * 1024 * 1024;
+            : self::DEFAULT_DEVICE_STORAGE_MB * 1024 * 1024;
 
         if (!isset($validated['recipient_device_storage']) && Schema::hasTable('devices')) {
             $recipientDevice = DB::table('devices')
@@ -836,7 +838,7 @@ class FileUploadController extends Controller
 
     private function getDeviceStorageLimitBytes(string $userId, string $deviceId): int
     {
-        $storageMb = 500;
+        $storageMb = self::DEFAULT_DEVICE_STORAGE_MB;
 
         try {
             if (Schema::hasTable('devices')) {
@@ -850,7 +852,7 @@ class FileUploadController extends Controller
                 }
             }
         } catch (\Throwable) {
-            $storageMb = 500;
+            $storageMb = self::DEFAULT_DEVICE_STORAGE_MB;
         }
 
         return $storageMb * 1024 * 1024;

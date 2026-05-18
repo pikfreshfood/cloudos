@@ -13,6 +13,8 @@ use Throwable;
 
 class DeviceController extends Controller
 {
+    private const DEFAULT_DEVICE_STORAGE_MB = 100;
+
     public function sync(Request $request): JsonResponse
     {
         $validated = $request->validate([
@@ -44,7 +46,7 @@ class DeviceController extends Controller
                     'name' => $device['name'] ?? null,
                     'os' => $device['os'] ?? null,
                     'phone_number' => $phoneNumber,
-                    'storage' => (int) ($device['storage'] ?? 500),
+                    'storage' => (int) ($device['storage'] ?? self::DEFAULT_DEVICE_STORAGE_MB),
                     'updated_at' => $now,
                     'created_at' => $now,
                 ]
