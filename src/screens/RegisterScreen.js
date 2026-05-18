@@ -31,6 +31,8 @@ export default function RegisterScreen({ navigation }) {
   const [phoneNumber, setPhoneNumber] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
+  const [isConfirmPasswordVisible, setIsConfirmPasswordVisible] = useState(false);
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [termsVisible, setTermsVisible] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -138,15 +140,27 @@ export default function RegisterScreen({ navigation }) {
                 <TextInput
                   style={styles.input}
                   placeholder="Password"
-                placeholderTextColor="#64748b"
-                secureTextEntry
-                autoCapitalize="none"
-                autoCorrect={false}
-                autoComplete="new-password"
-                textContentType="newPassword"
-                value={password}
-                onChangeText={setPassword}
-              />
+                  placeholderTextColor="#64748b"
+                  secureTextEntry={!isPasswordVisible}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  autoComplete="new-password"
+                  textContentType="newPassword"
+                  value={password}
+                  onChangeText={setPassword}
+                />
+                <TouchableOpacity
+                  style={styles.passwordToggle}
+                  onPress={() => setIsPasswordVisible((visible) => !visible)}
+                  accessibilityRole="button"
+                  accessibilityLabel={isPasswordVisible ? 'Hide password' : 'Show password'}
+                >
+                  <Ionicons
+                    name={isPasswordVisible ? 'eye-off-outline' : 'eye-outline'}
+                    size={22}
+                    color="#64748b"
+                  />
+                </TouchableOpacity>
               </View>
 
               <View style={styles.inputGroup}>
@@ -154,15 +168,27 @@ export default function RegisterScreen({ navigation }) {
                 <TextInput
                   style={styles.input}
                   placeholder="Confirm Password"
-                placeholderTextColor="#64748b"
-                secureTextEntry
-                autoCapitalize="none"
-                autoCorrect={false}
-                autoComplete="new-password"
-                textContentType="newPassword"
-                value={confirmPassword}
-                onChangeText={setConfirmPassword}
-              />
+                  placeholderTextColor="#64748b"
+                  secureTextEntry={!isConfirmPasswordVisible}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  autoComplete="new-password"
+                  textContentType="newPassword"
+                  value={confirmPassword}
+                  onChangeText={setConfirmPassword}
+                />
+                <TouchableOpacity
+                  style={styles.passwordToggle}
+                  onPress={() => setIsConfirmPasswordVisible((visible) => !visible)}
+                  accessibilityRole="button"
+                  accessibilityLabel={isConfirmPasswordVisible ? 'Hide confirm password' : 'Show confirm password'}
+                >
+                  <Ionicons
+                    name={isConfirmPasswordVisible ? 'eye-off-outline' : 'eye-outline'}
+                    size={22}
+                    color="#64748b"
+                  />
+                </TouchableOpacity>
               </View>
 
               <TouchableOpacity style={styles.termsRow} onPress={() => setAcceptedTerms((value) => !value)}>
@@ -314,6 +340,12 @@ const styles = StyleSheet.create({
     height: 56,
     color: '#0f172a',
     fontSize: 16,
+  },
+  passwordToggle: {
+    width: 40,
+    height: 56,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
   },
   registerBtn: {
     height: 56,

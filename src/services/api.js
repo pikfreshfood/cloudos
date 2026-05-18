@@ -2,8 +2,24 @@ import axios from 'axios';
 import Constants from 'expo-constants';
 import * as FileSystem from 'expo-file-system/legacy';
 
+const SAF = FileSystem.StorageAccessFramework || null;
 const API_SUFFIX = '/api';
 const LIVE_HOST = 'https://cloudos.ng/';
+
+const isSafUri = (uri = '') => (
+  typeof uri === 'string' &&
+  uri.startsWith('content://')
+);
+
+const readUploadFileAsBase64 = async (uri) => {
+  const options = { encoding: FileSystem.EncodingType.Base64 };
+
+  if (isSafUri(uri) && SAF?.readAsStringAsync) {
+    return SAF.readAsStringAsync(uri, options);
+  }
+
+  return FileSystem.readAsStringAsync(uri, options);
+};
 
 const normalizeApiUrl = (value) => {
   if (!value || typeof value !== 'string') return '';
@@ -235,9 +251,7 @@ export const fileService = {
   },
   uploadBase64: async ({ uri, name, mimeType, userId, deviceId, folderPath = '', onUploadProgress }) => {
     onUploadProgress?.({ loaded: 1, total: 3 });
-    const fileData = await FileSystem.readAsStringAsync(uri, {
-      encoding: FileSystem.EncodingType.Base64,
-    });
+    const fileData = await readUploadFileAsBase64(uri);
     onUploadProgress?.({ loaded: 2, total: 3 });
 
     const response = await api.post('files/upload-base64', {

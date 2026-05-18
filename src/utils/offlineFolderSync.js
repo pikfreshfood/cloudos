@@ -3,6 +3,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as TaskManager from 'expo-task-manager';
 import { Platform } from 'react-native';
 import { fileService } from '../services/api';
+import { DEFAULT_DEVICE_STORAGE_MB } from './deviceStorage';
 
 export const OFFLINE_SYNC_TASK_NAME = 'cloudos-offline-folder-sync';
 
@@ -206,7 +207,7 @@ export const addOfflineSyncFolder = async ({ folderPath, baseDir, userId, device
     baseDir: ensureTrailingSlash(baseDir),
     userId,
     deviceId,
-    storageMb: Number(storageMb || 500),
+    storageMb: Number(storageMb || DEFAULT_DEVICE_STORAGE_MB),
     isExternal: !!isExternal,
     enabled: syncActive,
     status: 'queued',
@@ -305,22 +306,45 @@ const collectFilesSaf = async (safUri) => {
   const rootUri = safUri.replace(/\/+$/g, '');
   const files = [];
 
+  const getSafInfo = async (uri) => {
+    try {
+      const info = await FileSystem.getInfoAsync(uri);
+      return info?.exists ? info : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const pushFile = async (uri, parentUri, info = null) => {
+    const fileInfo = info || await getSafInfo(uri);
+    files.push({
+      name: pathName(uri),
+      path: uri,
+      parentPath: parentUri.endsWith('/') ? parentUri : `${parentUri}/`,
+      size: Number(fileInfo?.size || 0),
+      signature: `${Number(fileInfo?.size || 0)}:${Number(fileInfo?.modificationTime || 0)}:${uri}`,
+    });
+  };
+
   const scan = async (uri) => {
     const items = await SAF.readDirectoryAsync(uri);
     for (const itemUri of items) {
+      const info = await getSafInfo(itemUri);
+
+      if (info?.isDirectory) {
+        await scan(itemUri);
+        continue;
+      }
+
+      if (info && info.isDirectory === false) {
+        await pushFile(itemUri, uri, info);
+        continue;
+      }
+
       try {
         await scan(itemUri);
       } catch {
-        const info = await FileSystem.getInfoAsync(itemUri).catch(() => null);
-        if (info && info.exists === false) continue;
-
-        files.push({
-          name: pathName(itemUri),
-          path: itemUri,
-          parentPath: uri.endsWith('/') ? uri : `${uri}/`,
-          size: Number(info?.size || 0),
-          signature: `${Number(info?.size || 0)}:${itemUri}`,
-        });
+        await pushFile(itemUri, uri, info);
       }
     }
   };
@@ -366,6 +390,35 @@ const uploadErrorMessage = (error) => (
   || error?.message
   || 'File upload failed.'
 );
+
+const fileUploadErrorMessage = (file, error) => (
+  `${file?.name || 'File'}: ${uploadErrorMessage(error)}`
+);
+
+const uploadSyncedFile = async ({ folder, file, uploadFolderPath }) => {
+  const isSafFile = folder.isExternal && Platform.OS === 'android' && SAF;
+  const payload = {
+    uri: file.path,
+    name: file.name,
+    userId: folder.userId,
+    deviceId: folder.deviceId,
+    folderPath: uploadFolderPath,
+  };
+
+  if (!isSafFile) {
+    return fileService.upload(payload);
+  }
+
+  try {
+    return await fileService.uploadBase64(payload);
+  } catch (error) {
+    if (isStorageFullError(error)) {
+      throw error;
+    }
+
+    return fileService.upload(payload);
+  }
+};
 
 const scheduleOfflineSyncRetry = async () => {
   if (offlineSyncRetryTimer) return;
@@ -418,6 +471,8 @@ export const runOfflineFolderSync = async ({ folderIds = null, onProgress } = {}
     }
 
     const folderIndex = state.folders.findIndex((item) => item.id === folder.id);
+    let folderFailedFiles = 0;
+    let folderNetworkError = false;
 
     try {
       if (folder.isExternal && Platform.OS === 'android' && SAF) {
@@ -439,7 +494,7 @@ export const runOfflineFolderSync = async ({ folderIds = null, onProgress } = {}
         await writeOfflineSyncState(state);
       }
 
-      const maxBytes = Number(folder.storageMb || 500) * MB;
+      const maxBytes = Number(folder.storageMb || DEFAULT_DEVICE_STORAGE_MB) * MB;
       let { usedBytes } = await getCloudUsage({
         userId: folder.userId,
         deviceId: folder.deviceId,
@@ -475,29 +530,12 @@ export const runOfflineFolderSync = async ({ folderIds = null, onProgress } = {}
         });
 
         try {
-          const isSafFile = folder.isExternal && Platform.OS === 'android' && SAF;
           const uploadFolderPath = syncUploadFolderPath({
             folder,
             parentPath: file.parentPath,
           });
 
-          if (isSafFile) {
-            await fileService.uploadBase64({
-              uri: file.path,
-              name: file.name,
-              userId: folder.userId,
-              deviceId: folder.deviceId,
-              folderPath: uploadFolderPath,
-            });
-          } else {
-            await fileService.upload({
-              uri: file.path,
-              name: file.name,
-              userId: folder.userId,
-              deviceId: folder.deviceId,
-              folderPath: uploadFolderPath,
-            });
-          }
+          await uploadSyncedFile({ folder, file, uploadFolderPath });
 
           usedBytes += file.size;
           result.uploadedFiles += 1;
@@ -513,12 +551,14 @@ export const runOfflineFolderSync = async ({ folderIds = null, onProgress } = {}
           }
 
           result.failedFiles += 1;
+          folderFailedFiles += 1;
           if (isNetworkSyncError(error)) {
             result.networkError = true;
+            folderNetworkError = true;
           }
-          state.lastError = uploadErrorMessage(error);
+          state.lastError = fileUploadErrorMessage(file, error);
 
-          if (result.networkError) {
+          if (folderNetworkError) {
             break;
           }
         }
@@ -528,18 +568,19 @@ export const runOfflineFolderSync = async ({ folderIds = null, onProgress } = {}
         state.folders[folderIndex] = {
           ...state.folders[folderIndex],
           enabled: true,
-          status: result.networkError ? 'waiting_network' : (result.failedFiles > 0 ? 'partial' : 'synced'),
+          status: folderNetworkError ? 'waiting_network' : (folderFailedFiles > 0 ? 'partial' : 'synced'),
           lastSyncedAt: new Date().toISOString(),
-          lastError: result.failedFiles > 0 ? state.lastError : null,
+          lastError: folderFailedFiles > 0 ? state.lastError : null,
           updatedAt: new Date().toISOString(),
         };
       }
     } catch (error) {
       result.failedFolders += 1;
+      const folderErrorIsNetwork = isNetworkSyncError(error);
       if (error?.code === 'STORAGE_FULL') {
         result.storageFull = true;
       }
-      if (isNetworkSyncError(error)) {
+      if (folderErrorIsNetwork) {
         result.networkError = true;
       }
 
@@ -547,7 +588,7 @@ export const runOfflineFolderSync = async ({ folderIds = null, onProgress } = {}
         state.folders[folderIndex] = {
           ...state.folders[folderIndex],
           enabled: true,
-          status: result.networkError
+          status: folderErrorIsNetwork
             ? 'waiting_network'
             : (error?.code === 'STORAGE_FULL' ? 'waiting_storage' : 'error'),
           lastError: uploadErrorMessage(error),

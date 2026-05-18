@@ -7,7 +7,7 @@ import * as Clipboard from 'expo-clipboard';
 import * as DocumentPicker from 'expo-document-picker';
 import { useOS } from '../context/OSContext';
 import { useAuth } from '../context/AuthContext';
-import { getDeviceStorageSnapshot } from '../utils/deviceStorage';
+import { DEFAULT_DEVICE_STORAGE_MB, getDeviceStorageSnapshot } from '../utils/deviceStorage';
 import { STORAGE_UPGRADE_OPTIONS, formatNgn, formatStoragePlan } from '../constants/storagePlans';
 import { fileService, paystackService, messageService } from '../services/api';
 const EMPTY_STORAGE = { usedBytes: 0, maxBytes: 0, availableBytes: 0 };
@@ -60,7 +60,7 @@ export default function DashboardScreen({ navigation, route }) {
       try {
         const entries = await Promise.all(
           phones.map(async (phone) => {
-            const maxBytes = Number(phone.storage || 500) * 1024 * 1024;
+            const maxBytes = Number(phone.storage || DEFAULT_DEVICE_STORAGE_MB) * 1024 * 1024;
             
             try {
               const apiResponse = await fileService.list({

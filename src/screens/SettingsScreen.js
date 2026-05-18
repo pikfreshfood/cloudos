@@ -7,7 +7,7 @@ import { useLock } from '../context/LockContext';
 import { useOS } from '../context/OSContext';
 import { useWallpaper } from '../context/WallpaperContext';
 import { useAuth } from '../context/AuthContext';
-import { getDeviceStorageSnapshot } from '../utils/deviceStorage';
+import { DEFAULT_DEVICE_STORAGE_MB, getDeviceStorageSnapshot } from '../utils/deviceStorage';
 import { STORAGE_UPGRADE_OPTIONS, formatNgn, formatStoragePlan } from '../constants/storagePlans';
 import { appStoreService, fileService, mediaService, paystackService } from '../services/api';
 import { getInstalledAppsStorageBytes, loadInstalledApps, toInstalledApp } from '../services/installedApps';
@@ -171,7 +171,7 @@ export default function SettingsScreen({ navigation }) {
 
     try {
       const hasApiContext = !!currentUser?.id && !!currentDevice?.id;
-      const maxBytes = Number(currentDevice.storage || 500) * 1024 * 1024;
+      const maxBytes = Number(currentDevice.storage || DEFAULT_DEVICE_STORAGE_MB) * 1024 * 1024;
       const deviceApps = await loadInstalledApps({
         userId: currentUser?.id,
         deviceId: currentDevice?.id,

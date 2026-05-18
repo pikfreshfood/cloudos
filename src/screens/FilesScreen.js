@@ -12,7 +12,7 @@ import { useOS } from '../context/OSContext';
 import { useAuth } from '../context/AuthContext';
 import { useMusicPlayer } from '../context/MusicPlayerContext';
 import * as DocumentPicker from 'expo-document-picker';
-import { ensureDeviceHasSpace, getDeviceStorageLimitBytes, getDeviceStorageSnapshot } from '../utils/deviceStorage';
+import { DEFAULT_DEVICE_STORAGE_MB, ensureDeviceHasSpace, getDeviceStorageLimitBytes, getDeviceStorageSnapshot } from '../utils/deviceStorage';
 import { resolveLocalRecipientDevice } from '../utils/recipientDevice';
 import { API_URL, fileService, messageService } from '../services/api';
 import { installApk } from '../native/apkInstaller';
@@ -706,7 +706,7 @@ export default function FilesScreen({ navigation }) {
       baseDir: getStorageDir() || '',
       userId: currentUser.id,
       deviceId: currentDevice.id,
-      storageMb: currentDevice.storage || 500,
+      storageMb: currentDevice.storage || DEFAULT_DEVICE_STORAGE_MB,
     });
 
     await refreshOfflineSyncFolders();
@@ -738,7 +738,7 @@ export default function FilesScreen({ navigation }) {
         baseDir: isExternalFolder ? folderPath : (getStorageDir() || ''),
         userId: currentUser.id,
         deviceId: currentDevice.id,
-        storageMb: currentDevice.storage || 500,
+        storageMb: currentDevice.storage || DEFAULT_DEVICE_STORAGE_MB,
         isExternal: isExternalFolder,
       });
 

@@ -11,10 +11,12 @@ const SESSION_PATH = Platform.OS !== 'web' ? `${FileSystem.documentDirectory}ses
 const USERS_ROOT_PATH = Platform.OS !== 'web' ? `${FileSystem.documentDirectory}users/` : '';
 const RESET_MARKER_PATH = Platform.OS !== 'web' ? `${FileSystem.documentDirectory}reset-all-complete.json` : '';
 const FORCE_RESET_ON_NEXT_LAUNCH = true;
+const DEFAULT_DEVICE_STORAGE_MB = 100;
+const LEGACY_DEFAULT_DEVICE_STORAGE_MB = 500;
 
 const DEVICE_TEMPLATES = [
-  { os: 'android', name: 'Android Cloud OS', storage: '500', isFree: true },
-  { os: 'ios', name: 'iPhone Cloud OS', storage: '500', isFree: true },
+  { os: 'android', name: 'Android Cloud OS', storage: String(DEFAULT_DEVICE_STORAGE_MB), isFree: true },
+  { os: 'ios', name: 'iPhone Cloud OS', storage: String(DEFAULT_DEVICE_STORAGE_MB), isFree: true },
 ];
 
 const slugifyEmail = (email) => email.trim().toLowerCase();
@@ -61,9 +63,24 @@ const buildDevicePhoneNumber = ({ accountPhoneNumber, deviceId, deviceIndex }) =
   return `${prefix}${suffix}`;
 };
 
+const normalizeDeviceStorage = (device) => {
+  const storageNumber = Number(device?.storage);
+
+  if (!Number.isFinite(storageNumber) || storageNumber <= 0) {
+    return String(DEFAULT_DEVICE_STORAGE_MB);
+  }
+
+  if (!device?.upgradedAt && storageNumber === LEGACY_DEFAULT_DEVICE_STORAGE_MB) {
+    return String(DEFAULT_DEVICE_STORAGE_MB);
+  }
+
+  return String(storageNumber);
+};
+
 const attachDevicePhoneNumbers = (devices, accountPhoneNumber) => (
   (devices || []).map((device, index) => ({
     ...device,
+    storage: normalizeDeviceStorage(device),
     phoneNumber: normalizeDigits(device.phoneNumber) || buildDevicePhoneNumber({
       accountPhoneNumber,
       deviceId: device.id,

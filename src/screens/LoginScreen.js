@@ -10,6 +10,7 @@ const cloudOsLogo = require('../../assets/cloud-os-logo.png');
 export default function LoginScreen({ navigation }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const { isAuthenticated, isHydrated, login } = useAuth();
 
@@ -71,7 +72,7 @@ export default function LoginScreen({ navigation }) {
                 style={styles.input}
                 placeholder="Password"
                 placeholderTextColor="#64748b"
-                secureTextEntry
+                secureTextEntry={!isPasswordVisible}
                 autoCapitalize="none"
                 autoCorrect={false}
                 autoComplete="password"
@@ -79,6 +80,18 @@ export default function LoginScreen({ navigation }) {
                 value={password}
                 onChangeText={setPassword}
               />
+              <TouchableOpacity
+                style={styles.passwordToggle}
+                onPress={() => setIsPasswordVisible((visible) => !visible)}
+                accessibilityRole="button"
+                accessibilityLabel={isPasswordVisible ? 'Hide password' : 'Show password'}
+              >
+                <Ionicons
+                  name={isPasswordVisible ? 'eye-off-outline' : 'eye-outline'}
+                  size={22}
+                  color="#64748b"
+                />
+              </TouchableOpacity>
             </View>
 
             <TouchableOpacity style={styles.forgotPassword} onPress={() => navigation.navigate('ForgotPasswordScreen', { email })}>
@@ -175,6 +188,12 @@ const styles = StyleSheet.create({
     height: 56,
     color: '#0f172a',
     fontSize: 16,
+  },
+  passwordToggle: {
+    width: 40,
+    height: 56,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
   },
   forgotPassword: {
     alignSelf: 'flex-end',
