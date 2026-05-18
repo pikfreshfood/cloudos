@@ -569,6 +569,24 @@ class FileUploadController extends Controller
             ? User::find($validated['recipient_user_id'])
             : null;
 
+        if (!$recipient && Schema::hasTable('devices')) {
+            $recipientDevice = DB::table('devices')
+                ->where('device_id', $recipientPhoneInput)
+                ->first();
+
+            if (!$recipientDevice) {
+                $normalizedDeviceInput = strtolower(trim($recipientPhoneInput));
+                $recipientDevice = DB::table('devices')
+                    ->whereRaw('LOWER(device_id) = ?', [$normalizedDeviceInput])
+                    ->first();
+            }
+
+            if ($recipientDevice) {
+                $recipient = User::find($recipientDevice->user_id);
+                $recipientDeviceId = $recipientDevice->device_id;
+            }
+        }
+
         if (!$recipient && !empty($recipientDigits) && Schema::hasTable('devices')) {
             $recipientDevice = $this->findDeviceByPhoneNumber($recipientPhoneInput, $recipientDigits);
 
