@@ -16,6 +16,7 @@ return new class extends Migration
             $table->string('os', 30)->nullable();
             $table->string('phone_number', 50)->nullable()->unique();
             $table->unsignedInteger('storage')->default(100);
+            $table->timestamp('storage_expires_at')->nullable();
             $table->timestamps();
 
             $table->unique(['user_id', 'device_id']);

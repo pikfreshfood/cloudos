@@ -25,6 +25,7 @@ class DeviceController extends Controller
             'devices.*.os' => ['nullable', 'string', 'max:30'],
             'devices.*.phone_number' => ['required', 'string', 'max:50'],
             'devices.*.storage' => ['nullable', 'numeric', 'min:1'],
+            'devices.*.storage_expires_at' => ['nullable', 'date'],
         ]);
 
         $now = now();
@@ -47,6 +48,7 @@ class DeviceController extends Controller
                     'os' => $device['os'] ?? null,
                     'phone_number' => $phoneNumber,
                     'storage' => (int) ($device['storage'] ?? self::DEFAULT_DEVICE_STORAGE_MB),
+                    'storage_expires_at' => $device['storage_expires_at'] ?? null,
                     'updated_at' => $now,
                     'created_at' => $now,
                 ]
@@ -77,6 +79,7 @@ class DeviceController extends Controller
                 'os' => $row->os,
                 'phone_number' => $row->phone_number,
                 'storage' => (int) $row->storage,
+                'storage_expires_at' => $row->storage_expires_at ?? null,
                 'created_at' => $row->created_at,
                 'updated_at' => $row->updated_at,
             ]);

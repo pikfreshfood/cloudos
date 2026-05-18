@@ -253,6 +253,7 @@ class ContactController extends Controller
             'os' => $device->os,
             'phone_number' => $device->phone_number,
             'storage' => (int) ($device->storage ?? self::DEFAULT_DEVICE_STORAGE_MB),
+            'storage_expires_at' => $device->storage_expires_at ?? null,
         ];
     }
 }

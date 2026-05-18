@@ -14,8 +14,13 @@ class Device extends Model
         'os',
         'phone_number',
         'storage',
+        'storage_expires_at',
         'push_token',
         'push_platform',
+    ];
+
+    protected $casts = [
+        'storage_expires_at' => 'datetime',
     ];
 
     public function user(): BelongsTo

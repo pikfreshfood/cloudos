@@ -7,7 +7,9 @@ use App\Models\PaystackTransaction;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 class PaystackPaymentController extends Controller
@@ -51,6 +53,7 @@ class PaystackPaymentController extends Controller
             'device_id' => $validated['device_id'],
             'device_name' => $validated['device_name'],
             'storage_mb' => $validated['storage_mb'],
+            'billing_period' => 'yearly',
         ];
 
         $response = Http::timeout(30)
@@ -81,6 +84,7 @@ class PaystackPaymentController extends Controller
             'device_id' => $validated['device_id'],
             'device_name' => $validated['device_name'],
             'storage_mb' => $validated['storage_mb'],
+            'billing_period' => 'yearly',
             'amount_kobo' => $amountKobo,
             'status' => 'initialized',
             'authorization_url' => $data['authorization_url'] ?? null,
@@ -95,6 +99,7 @@ class PaystackPaymentController extends Controller
             'access_code' => $data['access_code'] ?? null,
             'amount_ngn' => $priceNgn,
             'storage_mb' => $validated['storage_mb'],
+            'billing_period' => 'yearly',
             'public_key' => config('services.paystack.public_key'),
         ]);
     }
@@ -122,6 +127,8 @@ class PaystackPaymentController extends Controller
                 'verified' => true,
                 'reference' => $transaction->reference,
                 'storage_mb' => $transaction->storage_mb,
+                'billing_period' => $transaction->billing_period ?? 'yearly',
+                'storage_expires_at' => $transaction->storage_expires_at?->toISOString(),
                 'amount_ngn' => (int) ($transaction->amount_kobo / 100),
                 'device_id' => $transaction->device_id,
                 'device_name' => $transaction->device_name,
@@ -157,16 +164,24 @@ class PaystackPaymentController extends Controller
             ], 422);
         }
 
+        $paidAt = Carbon::now();
+        $storageExpiresAt = $paidAt->copy()->addYear();
+
         $transaction->update([
             'status' => 'success',
-            'paid_at' => Carbon::now(),
+            'paid_at' => $paidAt,
+            'storage_expires_at' => $storageExpiresAt,
             'verified_payload' => $data,
         ]);
+
+        $this->activateDeviceStorage($transaction, $storageExpiresAt);
 
         return response()->json([
             'verified' => true,
             'reference' => $transaction->reference,
             'storage_mb' => $transaction->storage_mb,
+            'billing_period' => $transaction->billing_period ?? 'yearly',
+            'storage_expires_at' => $storageExpiresAt->toISOString(),
             'amount_ngn' => (int) ($transaction->amount_kobo / 100),
             'device_id' => $transaction->device_id,
             'device_name' => $transaction->device_name,
@@ -188,5 +203,26 @@ class PaystackPaymentController extends Controller
             503,
             'Paystack is not configured yet.'
         );
+    }
+
+    private function activateDeviceStorage(PaystackTransaction $transaction, Carbon $storageExpiresAt): void
+    {
+        if (! Schema::hasTable('devices')) {
+            return;
+        }
+
+        $updates = [
+            'storage' => $transaction->storage_mb,
+            'updated_at' => now(),
+        ];
+
+        if (Schema::hasColumn('devices', 'storage_expires_at')) {
+            $updates['storage_expires_at'] = $storageExpiresAt;
+        }
+
+        DB::table('devices')
+            ->where('user_id', $transaction->user_id)
+            ->where('device_id', $transaction->device_id)
+            ->update($updates);
     }
 }

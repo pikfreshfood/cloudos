@@ -32,14 +32,17 @@ class FileUploadController extends Controller
         $disk = Storage::disk('local');
         $showExcluded = $validated['show_excluded'] ?? false;
         $excludedFolderName = 'Excluded from Sync';
+        $storageLimit = self::DEFAULT_DEVICE_STORAGE_MB * 1024 * 1024;
 
         try {
             $usedSpace = $this->getDeviceUsedSpace($validated['user_id'], $validated['device_id']);
+            $storageLimit = $this->getDeviceStorageLimitBytes($validated['user_id'], $validated['device_id']);
             if (! $disk->exists($basePath)) {
               return response()->json([
                   'files' => [],
                   'folder_path' => $folderPath,
                   'used_space' => $usedSpace,
+                  'storage_limit' => $storageLimit,
               ]);
             }
 
@@ -71,6 +74,7 @@ class FileUploadController extends Controller
                 'files' => [],
                 'folder_path' => $folderPath,
                 'used_space' => 0,
+                'storage_limit' => $storageLimit,
             ]);
         }
 
@@ -78,6 +82,7 @@ class FileUploadController extends Controller
             'files' => $items,
             'folder_path' => $folderPath,
             'used_space' => $usedSpace,
+            'storage_limit' => $storageLimit,
         ]);
     }
 

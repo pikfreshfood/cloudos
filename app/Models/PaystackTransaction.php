@@ -14,6 +14,7 @@ class PaystackTransaction extends Model
         'device_id',
         'device_name',
         'storage_mb',
+        'billing_period',
         'amount_kobo',
         'status',
         'authorization_url',
@@ -22,12 +23,14 @@ class PaystackTransaction extends Model
         'metadata',
         'verified_payload',
         'paid_at',
+        'storage_expires_at',
     ];
 
     protected $casts = [
         'metadata' => 'array',
         'verified_payload' => 'array',
         'paid_at' => 'datetime',
+        'storage_expires_at' => 'datetime',
     ];
 
     public function user(): BelongsTo
