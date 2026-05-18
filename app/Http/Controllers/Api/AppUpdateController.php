@@ -17,8 +17,10 @@ class AppUpdateController extends Controller
             'last_seen_version' => ['nullable', 'integer'],
         ]);
 
-        $latestUpdate = AppUpdate::where('status', 'active')
-            ->latest()
+        $latestUpdate = AppUpdate::query()
+            ->where('status', 'active')
+            ->orderByDesc('version_code')
+            ->orderByDesc('id')
             ->first();
 
         if (!$latestUpdate) {
