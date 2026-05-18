@@ -11,6 +11,7 @@ export const OFFLINE_SYNC_STATE_TYPE = 'offline_folder';
 const SAF = FileSystem.StorageAccessFramework || null;
 const NETWORK_RETRY_DELAY_MS = 10000;
 const RETRYABLE_FOLDER_STATUSES = new Set(['partial', 'error', 'waiting_network', 'waiting_storage']);
+const FOLDER_REMOVED_CODE = 'FOLDER_REMOVED';
 
 let syncCancelled = false;
 export const cancelOfflineSync = () => {
@@ -319,13 +320,16 @@ export const addOfflineSyncFolder = async ({ folderPath, baseDir, userId, device
 export const removeOfflineSyncFolder = async (folderId) => {
   const state = await readOfflineSyncState();
   state.folders = state.folders.filter((folder) => folder.id !== folderId);
-  if (state.folders.length === 0) {
+  if (!hasEnabledSyncFolders(state)) {
     state.syncActive = false;
   }
   await writeOfflineSyncState(state);
   await saveRemoteOfflineSyncState(state, {
     status: state.syncActive ? 'active' : 'stopped',
   });
+  if (!state.syncActive) {
+    await unregisterOfflineSyncTaskAsync();
+  }
 
   return state;
 };
@@ -594,11 +598,19 @@ export const runOfflineFolderSync = async ({ folderIds = null, onProgress } = {}
 
     try {
       if (folder.isExternal && Platform.OS === 'android' && SAF) {
-        await SAF.readDirectoryAsync(String(folder.path || '').replace(/\/+$/g, ''));
+        try {
+          await SAF.readDirectoryAsync(String(folder.path || '').replace(/\/+$/g, ''));
+        } catch (error) {
+          const missingFolderError = new Error('Marked folder no longer exists on this device.');
+          missingFolderError.code = FOLDER_REMOVED_CODE;
+          throw missingFolderError;
+        }
       } else {
         const folderInfo = await FileSystem.getInfoAsync(folder.path);
         if (!folderInfo.exists || !folderInfo.isDirectory) {
-          throw new Error('Marked folder no longer exists on this device.');
+          const missingFolderError = new Error('Marked folder no longer exists on this device.');
+          missingFolderError.code = FOLDER_REMOVED_CODE;
+          throw missingFolderError;
         }
       }
 
@@ -711,6 +723,7 @@ export const runOfflineFolderSync = async ({ folderIds = null, onProgress } = {}
       }
     } catch (error) {
       result.failedFolders += 1;
+      const folderWasRemoved = error?.code === FOLDER_REMOVED_CODE;
       const folderErrorIsNetwork = isNetworkSyncError(error);
       if (error?.code === 'STORAGE_FULL') {
         result.storageFull = true;
@@ -722,10 +735,12 @@ export const runOfflineFolderSync = async ({ folderIds = null, onProgress } = {}
       if (folderIndex >= 0) {
         state.folders[folderIndex] = {
           ...state.folders[folderIndex],
-          enabled: true,
+          enabled: !folderWasRemoved,
           status: folderErrorIsNetwork
             ? 'waiting_network'
-            : (error?.code === 'STORAGE_FULL' ? 'waiting_storage' : 'error'),
+            : folderWasRemoved
+              ? 'stopped'
+              : (error?.code === 'STORAGE_FULL' ? 'waiting_storage' : 'error'),
           lastError: uploadErrorMessage(error),
           updatedAt: new Date().toISOString(),
         };
@@ -733,7 +748,20 @@ export const runOfflineFolderSync = async ({ folderIds = null, onProgress } = {}
 
       state.lastError = uploadErrorMessage(error);
       result.lastError = state.lastError;
+      if (folderWasRemoved && !hasEnabledSyncFolders(state)) {
+        state.syncActive = false;
+      }
       await writeOfflineSyncState(state);
+      if (folderWasRemoved) {
+        await saveRemoteOfflineSyncState(state, {
+          status: state.syncActive ? 'active' : 'stopped',
+          progress: 0,
+          errorMessage: state.lastError,
+        });
+        if (!state.syncActive) {
+          await unregisterOfflineSyncTaskAsync();
+        }
+      }
     }
   }
 
