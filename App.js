@@ -1,5 +1,5 @@
 import React from 'react';
-import { AppState, Modal, Text, TouchableOpacity, Vibration, View, StyleSheet, PanResponder, Dimensions, Platform } from 'react-native';
+import { Alert, AppState, Modal, Text, TouchableOpacity, Vibration, View, StyleSheet, PanResponder, Dimensions, Platform } from 'react-native';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -11,10 +11,15 @@ import { LockProvider } from './src/context/LockContext';
 import { OSProvider, useOS } from './src/context/OSContext';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { MusicPlayerProvider } from './src/context/MusicPlayerContext';
-import { messageService, signalService } from './src/services/api';
+import { appUpdateService, messageService, signalService } from './src/services/api';
 import {
+  addNotificationResponseListener,
+  configureNotificationActions,
+  getLastNotificationResponse,
+  handleNotificationResponse,
   showIncomingCallNotification,
   showMessageNotification,
+  syncPushTokenForDevice,
 } from './src/utils/pushNotifications';
 import {
   getDefaultMessageToneOption,
@@ -24,6 +29,7 @@ import {
   playSound,
 } from './src/utils/soundSettings';
 import { upsertRecentCall } from './src/utils/callHistory';
+import { restoreOfflineSyncTaskAsync } from './src/utils/offlineFolderSync';
 
 // Screens
 import LoginScreen from './src/screens/LoginScreen';
@@ -558,6 +564,178 @@ function MessageNotificationWatcher() {
   return null;
 }
 
+function OfflineFolderSyncRestarter() {
+  React.useEffect(() => {
+    restoreOfflineSyncTaskAsync().catch((error) => {
+      console.log('Offline folder sync restore failed:', error?.message || error);
+    });
+
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        restoreOfflineSyncTaskAsync().catch((error) => {
+          console.log('Offline folder sync active restore failed:', error?.message || error);
+        });
+      }
+    });
+
+    return () => subscription.remove();
+  }, []);
+
+  return null;
+}
+
+function PushNotificationBridge() {
+  const { currentUser } = useAuth();
+  const { currentDevice } = useOS();
+  const handledInitialResponseRef = React.useRef(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+
+    const syncPushToken = async () => {
+      try {
+        await configureNotificationActions();
+
+        if (cancelled) return;
+
+        await syncPushTokenForDevice({ currentUser, currentDevice });
+      } catch (error) {
+        console.log('Push notification token sync failed:', error?.message || error);
+      }
+    };
+
+    syncPushToken();
+
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        syncPushToken();
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      subscription.remove();
+    };
+  }, [currentDevice?.id, currentDevice?.phoneNumber, currentUser?.id]);
+
+  React.useEffect(() => {
+    const handleResponse = (response) => handleNotificationResponse({
+      response,
+      currentUser,
+      currentDevice,
+      navigationRef,
+    }).catch((error) => {
+      console.log('Notification response handling failed:', error?.message || error);
+    });
+
+    const subscription = addNotificationResponseListener(handleResponse);
+
+    if (!handledInitialResponseRef.current) {
+      getLastNotificationResponse()
+        .then((response) => {
+          if (!response) {
+            return;
+          }
+
+          const handleWhenReady = () => {
+            if (!navigationRef.isReady()) {
+              setTimeout(handleWhenReady, 500);
+              return;
+            }
+
+            if (handledInitialResponseRef.current) {
+              return;
+            }
+
+            handledInitialResponseRef.current = true;
+            handleResponse(response);
+          };
+
+          handleWhenReady();
+        })
+        .catch((error) => {
+          console.log('Initial notification response check failed:', error?.message || error);
+        });
+    }
+
+    return () => subscription.remove();
+  }, [currentDevice, currentUser]);
+
+  return null;
+}
+
+function AppUpdateWatcher() {
+  const { currentUser } = useAuth();
+  const shownUpdateIdsRef = React.useRef(new Set());
+  const isCheckingRef = React.useRef(false);
+
+  const checkForUpdate = React.useCallback(async () => {
+    if (!currentUser?.id || isCheckingRef.current) {
+      return;
+    }
+
+    isCheckingRef.current = true;
+
+    try {
+      const response = await appUpdateService.latest({
+        userId: currentUser.id,
+      });
+      const update = response?.update;
+
+      if (!update?.id || shownUpdateIdsRef.current.has(update.id)) {
+        return;
+      }
+
+      shownUpdateIdsRef.current.add(update.id);
+
+      Alert.alert(
+        update.title || 'Cloud OS update',
+        update.message || 'A new admin update is available for Cloud OS.',
+        [
+          {
+            text: 'OK',
+            onPress: () => {
+              appUpdateService.markSeen({
+                userId: currentUser.id,
+                appUpdateId: update.id,
+                action: 'seen',
+              }).catch((error) => {
+                shownUpdateIdsRef.current.delete(update.id);
+                console.log('Failed to mark app update seen:', error?.message || error);
+              });
+            },
+          },
+        ]
+      );
+    } catch (error) {
+      console.log('App update check failed:', error?.message || error);
+    } finally {
+      isCheckingRef.current = false;
+    }
+  }, [currentUser?.id]);
+
+  React.useEffect(() => {
+    if (!currentUser?.id) {
+      return undefined;
+    }
+
+    checkForUpdate();
+    const interval = setInterval(checkForUpdate, 30000);
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        checkForUpdate();
+      }
+    });
+
+    return () => {
+      clearInterval(interval);
+      subscription.remove();
+    };
+  }, [checkForUpdate, currentUser?.id]);
+
+  return null;
+}
+
 export default function App() {
   return (
     <AuthProvider>
@@ -578,6 +756,9 @@ export default function App() {
                     }}
                 >
                   <StatusBar style="auto" />
+                  <PushNotificationBridge />
+                  <AppUpdateWatcher />
+                  <OfflineFolderSyncRestarter />
                   <IncomingDeviceCallWatcher />
                   <MessageNotificationWatcher />
                     <Stack.Navigator 

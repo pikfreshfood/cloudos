@@ -112,6 +112,7 @@ export const deviceService = {
         os: device.os,
         phone_number: device.phoneNumber || device.phone_number,
         storage: device.storage,
+        storage_expires_at: device.storageExpiresAt || device.storage_expires_at || null,
       })),
     });
     return response.data;
@@ -453,6 +454,26 @@ export const paystackService = {
   },
   verify: async (reference) => {
     const response = await api.post('payments/paystack/verify', { reference });
+    return response.data;
+  },
+};
+
+export const appUpdateService = {
+  latest: async ({ userId, lastSeenVersion = 0 }) => {
+    const response = await api.get('app-updates/latest', {
+      params: {
+        user_id: userId,
+        last_seen_version: lastSeenVersion,
+      },
+    });
+    return response.data;
+  },
+  markSeen: async ({ userId, appUpdateId, action = 'seen' }) => {
+    const response = await api.post('app-updates/mark-seen', {
+      user_id: userId,
+      app_update_id: appUpdateId,
+      action,
+    });
     return response.data;
   },
 };

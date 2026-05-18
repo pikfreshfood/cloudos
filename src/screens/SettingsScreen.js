@@ -8,7 +8,7 @@ import { useOS } from '../context/OSContext';
 import { useWallpaper } from '../context/WallpaperContext';
 import { useAuth } from '../context/AuthContext';
 import { DEFAULT_DEVICE_STORAGE_MB, getDeviceStorageSnapshot } from '../utils/deviceStorage';
-import { STORAGE_UPGRADE_OPTIONS, formatNgn, formatStoragePlan } from '../constants/storagePlans';
+import { STORAGE_UPGRADE_OPTIONS, formatStorageDaysLeft, formatStorageExpiry, formatStoragePlanPrice } from '../constants/storagePlans';
 import { appStoreService, fileService, mediaService, paystackService } from '../services/api';
 import { getInstalledAppsStorageBytes, loadInstalledApps, toInstalledApp } from '../services/installedApps';
 import {
@@ -281,8 +281,8 @@ export default function SettingsScreen({ navigation }) {
     }
 
     const currentStorageMb = Number(currentDevice.storage || 0);
-    if (plan.storageMb <= currentStorageMb) {
-      Alert.alert('Storage already upgraded', 'Choose a larger storage size for this device.');
+    if (plan.storageMb < currentStorageMb) {
+      Alert.alert('Choose current or larger', 'Select the current plan to renew for one year, or choose a larger storage size.');
       return;
     }
 
@@ -301,6 +301,7 @@ export default function SettingsScreen({ navigation }) {
         reference: payment.reference,
         amountNgn: payment.amount_ngn,
         nextStorageMb: plan.storageMb,
+        billingPeriod: payment.billing_period || plan.billingPeriod,
         userId: currentUser.id,
         deviceId: currentDevice.id,
         deviceName: currentDevice.name,
@@ -362,7 +363,7 @@ export default function SettingsScreen({ navigation }) {
     const usedFormatted = formatStorageValue(storageSnapshot.usedBytes);
     const maxMb = Number(currentDevice.storage || 0);
     const maxFormatted = maxMb >= 1024 ? `${(maxMb / 1024).toFixed(0)} GB` : `${maxMb} MB`;
-    return `${usedFormatted} of ${maxFormatted} used`;
+    return `${usedFormatted} of ${maxFormatted} used, ${formatStorageDaysLeft(currentDevice.storageExpiresAt)}`;
   }, [currentDevice, storageSnapshot.usedBytes]);
 
   const upgradeStorageValue = useMemo(() => {
@@ -661,10 +662,17 @@ export default function SettingsScreen({ navigation }) {
             <Text style={styles.storageDetailText}>
               Current plan: {currentDevice?.storage || 0} MB
             </Text>
+            <Text style={styles.storageDetailText}>
+              Yearly renewal: {formatStorageExpiry(currentDevice?.storageExpiresAt)}
+            </Text>
+            <Text style={styles.storageDetailText}>
+              Period left: {formatStorageDaysLeft(currentDevice?.storageExpiresAt)}
+            </Text>
 
             <View style={styles.upgradeOptions}>
               {STORAGE_UPGRADE_OPTIONS.map((option) => {
-                const isCurrentOrLower = option.storageMb <= Number(currentDevice?.storage || 0);
+                const isCurrentOrLower = option.storageMb < Number(currentDevice?.storage || 0);
+                const isRenewal = option.storageMb === Number(currentDevice?.storage || 0);
                 return (
                   <TouchableOpacity
                     key={option.storageMb}
@@ -681,7 +689,7 @@ export default function SettingsScreen({ navigation }) {
                         isCurrentOrLower && styles.upgradeOptionTextDisabled,
                       ]}
                     >
-                      {formatStoragePlan(option.storageMb)} - {formatNgn(option.priceNgn)}
+                      {isRenewal ? 'Renew ' : ''}{formatStoragePlanPrice(option)}
                     </Text>
                   </TouchableOpacity>
                 );

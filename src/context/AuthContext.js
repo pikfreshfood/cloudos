@@ -77,10 +77,29 @@ const normalizeDeviceStorage = (device) => {
   return String(storageNumber);
 };
 
+const normalizeStorageExpiry = (device) => {
+  if (device.storageExpiresAt || device.storage_expires_at) {
+    return device.storageExpiresAt || device.storage_expires_at;
+  }
+
+  if (!device.upgradedAt) {
+    return null;
+  }
+
+  const upgradedAt = new Date(device.upgradedAt);
+  if (Number.isNaN(upgradedAt.getTime())) {
+    return null;
+  }
+
+  upgradedAt.setFullYear(upgradedAt.getFullYear() + 1);
+  return upgradedAt.toISOString();
+};
+
 const attachDevicePhoneNumbers = (devices, accountPhoneNumber) => (
   (devices || []).map((device, index) => ({
     ...device,
     storage: normalizeDeviceStorage(device),
+    storageExpiresAt: normalizeStorageExpiry(device),
     phoneNumber: normalizeDigits(device.phoneNumber) || buildDevicePhoneNumber({
       accountPhoneNumber,
       deviceId: device.id,
@@ -389,7 +408,7 @@ export const AuthProvider = ({ children }) => {
     await persistSession(null);
   }, [persistSession]);
 
-  const updateDeviceStorage = useCallback(async ({ userId, deviceId, storage }) => {
+  const updateDeviceStorage = useCallback(async ({ userId, deviceId, storage, storageExpiresAt = null }) => {
     const normalizedStorage = String(Number(storage) || 0);
     if (!userId || !deviceId || !Number(normalizedStorage)) {
       return { ok: false, error: 'Invalid device storage update.' };
@@ -411,6 +430,7 @@ export const AuthProvider = ({ children }) => {
           ...device,
           storage: normalizedStorage,
           upgradedAt: new Date().toISOString(),
+          storageExpiresAt: storageExpiresAt || device.storageExpiresAt || null,
         };
       });
 

@@ -8,7 +8,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import { useOS } from '../context/OSContext';
 import { useAuth } from '../context/AuthContext';
 import { DEFAULT_DEVICE_STORAGE_MB, getDeviceStorageSnapshot } from '../utils/deviceStorage';
-import { STORAGE_UPGRADE_OPTIONS, formatNgn, formatStoragePlan } from '../constants/storagePlans';
+import { STORAGE_UPGRADE_OPTIONS, formatStorageDaysLeft, formatStorageExpiry, formatStoragePlanPrice } from '../constants/storagePlans';
 import { fileService, paystackService, messageService } from '../services/api';
 const EMPTY_STORAGE = { usedBytes: 0, maxBytes: 0, availableBytes: 0 };
 const SUPPORT_PHONE_NUMBER = '0000000000';
@@ -322,8 +322,8 @@ export default function DashboardScreen({ navigation, route }) {
     }
 
     const currentStorage = Number(upgradeDevice.storage || 0);
-    if (plan.storageMb <= currentStorage) {
-      Alert.alert('Already active', 'Choose a larger storage size for this device.');
+    if (plan.storageMb < currentStorage) {
+      Alert.alert('Choose current or larger', 'Select the current plan to renew for one year, or choose a larger storage size.');
       return;
     }
 
@@ -342,6 +342,7 @@ export default function DashboardScreen({ navigation, route }) {
         reference: payment.reference,
         amountNgn: payment.amount_ngn,
         nextStorageMb: plan.storageMb,
+        billingPeriod: payment.billing_period || plan.billingPeriod,
         userId: currentUser.id,
         deviceId: upgradeDevice.id,
         deviceName: upgradeDevice.name,
@@ -372,6 +373,7 @@ export default function DashboardScreen({ navigation, route }) {
         {phones.map((phone) => {
           const snapshot = storageSnapshots[phone.id] || EMPTY_STORAGE;
           const storageLabel = `${formatStorageAmount(snapshot.usedBytes)} / ${formatStorageAmount(snapshot.maxBytes || Number(phone.storage || 0) * 1024 * 1024)} used`;
+          const storageDaysLeft = formatStorageDaysLeft(phone.storageExpiresAt);
 
           return (
             <View key={phone.id} style={styles.phoneCard}>
@@ -412,6 +414,7 @@ export default function DashboardScreen({ navigation, route }) {
             <View style={styles.badgesContainer}>
               <View style={styles.storageBadge}>
                 <Text style={styles.storageBadgeText}>{storageLabel}</Text>
+                <Text style={styles.storageBadgeSubText}>{storageDaysLeft}</Text>
               </View>
             </View>
 
@@ -495,10 +498,13 @@ export default function DashboardScreen({ navigation, route }) {
 
             <Text style={styles.planName}>{upgradeDevice?.name || 'Selected device'}</Text>
             <Text style={styles.planPrice}>Current storage: {upgradeDevice?.storage || 0}MB</Text>
+            <Text style={styles.planPrice}>Period left: {formatStorageDaysLeft(upgradeDevice?.storageExpiresAt)}</Text>
+            <Text style={styles.planPrice}>Renews yearly. Expires: {formatStorageExpiry(upgradeDevice?.storageExpiresAt)}</Text>
 
             <View style={styles.upgradeOptions}>
               {STORAGE_UPGRADE_OPTIONS.map((option) => {
-                const disabled = option.storageMb <= Number(upgradeDevice?.storage || 0);
+                const disabled = option.storageMb < Number(upgradeDevice?.storage || 0);
+                const isRenewal = option.storageMb === Number(upgradeDevice?.storage || 0);
                 return (
                   <TouchableOpacity
                     key={option.storageMb}
@@ -507,7 +513,7 @@ export default function DashboardScreen({ navigation, route }) {
                     onPress={() => handleUpgradeDevice(option)}
                   >
                     <Text style={[styles.upgradeOptionText, disabled && styles.upgradeOptionTextDisabled]}>
-                      {formatStoragePlan(option.storageMb)} - {formatNgn(option.priceNgn)}
+                      {isRenewal ? 'Renew ' : ''}{formatStoragePlanPrice(option)}
                     </Text>
                   </TouchableOpacity>
                 );
@@ -743,6 +749,12 @@ const styles = StyleSheet.create({
     color: '#2563eb',
     fontSize: 10,
     fontWeight: 'bold',
+  },
+  storageBadgeSubText: {
+    color: '#1d4ed8',
+    fontSize: 10,
+    fontWeight: '700',
+    marginTop: 2,
   },
   freeBadge: {
     backgroundColor: '#f0fdf4',

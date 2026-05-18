@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { WebView } from 'react-native-webview';
 import { useAuth } from '../context/AuthContext';
 import { WEB_BASE_URL, paystackService } from '../services/api';
-import { formatNgn, formatStoragePlan } from '../constants/storagePlans';
+import { formatNgn, formatStorageExpiry, formatStoragePlan } from '../constants/storagePlans';
 
 export default function PaystackCheckoutScreen({ navigation, route }) {
   const { updateDeviceStorage } = useAuth();
@@ -19,6 +19,7 @@ export default function PaystackCheckoutScreen({ navigation, route }) {
     deviceName,
     nextStorageMb,
     amountNgn,
+    billingPeriod,
   } = route.params || {};
 
   const handleVerifiedUpgrade = async () => {
@@ -39,6 +40,7 @@ export default function PaystackCheckoutScreen({ navigation, route }) {
         userId,
         deviceId,
         storage: nextStorageMb,
+        storageExpiresAt: verification.storage_expires_at,
       });
 
       if (!updated.ok) {
@@ -47,7 +49,7 @@ export default function PaystackCheckoutScreen({ navigation, route }) {
 
       Alert.alert(
         'Storage upgraded',
-        `${deviceName} is now on the ${formatStoragePlan(nextStorageMb)} plan.`,
+        `${deviceName} is now on the ${formatStoragePlan(nextStorageMb)} yearly plan until ${formatStorageExpiry(verification.storage_expires_at)}.`,
         [{ text: 'OK', onPress: () => navigation.goBack() }]
       );
     } catch (error) {
@@ -87,7 +89,7 @@ export default function PaystackCheckoutScreen({ navigation, route }) {
         <View style={styles.headerTextWrap}>
           <Text style={styles.headerTitle}>Paystack Checkout</Text>
           <Text style={styles.headerSubtitle}>
-            {formatStoragePlan(nextStorageMb)} for {formatNgn(amountNgn)}
+            {formatStoragePlan(nextStorageMb)} for {formatNgn(amountNgn)}/{billingPeriod === 'yearly' ? 'year' : 'period'}
           </Text>
         </View>
         <View style={styles.headerSpacer} />

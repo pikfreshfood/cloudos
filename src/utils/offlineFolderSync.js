@@ -9,6 +9,7 @@ export const OFFLINE_SYNC_TASK_NAME = 'cloudos-offline-folder-sync';
 
 const SAF = FileSystem.StorageAccessFramework || null;
 const NETWORK_RETRY_DELAY_MS = 10000;
+const RETRYABLE_FOLDER_STATUSES = new Set(['partial', 'error', 'waiting_network', 'waiting_storage']);
 
 let syncCancelled = false;
 export const cancelOfflineSync = () => {
@@ -57,6 +58,8 @@ const DEFAULT_STATE = {
   lastRunAt: null,
   lastResult: null,
   lastError: null,
+  lastRetryRequestedAt: null,
+  retryReason: null,
 };
 
 const MB = 1024 * 1024;
@@ -358,7 +361,7 @@ const getCloudUsage = async ({ userId, deviceId, maxBytes }) => {
 
   return {
     usedBytes: Number(response?.used_space || 0),
-    maxBytes,
+    maxBytes: Number(response?.storage_limit || maxBytes),
   };
 };
 
@@ -420,25 +423,52 @@ const uploadSyncedFile = async ({ folder, file, uploadFolderPath }) => {
   }
 };
 
+const hasEnabledSyncFolders = (state) => (
+  !!state.syncActive && state.folders.some((folder) => folder.enabled)
+);
+
+const shouldRetrySyncResult = (result = {}) => (
+  !!result &&
+  !result.cancelled &&
+  (
+    !!result.networkError ||
+    !!result.storageFull ||
+    Number(result.failedFiles || 0) > 0 ||
+    Number(result.failedFolders || 0) > 0
+  )
+);
+
+const hasRetryableSyncState = (state) => (
+  shouldRetrySyncResult(state.lastResult) ||
+  state.folders.some((folder) => folder.enabled && RETRYABLE_FOLDER_STATUSES.has(folder.status))
+);
+
 const scheduleOfflineSyncRetry = async () => {
   if (offlineSyncRetryTimer) return;
 
   const state = await readOfflineSyncState();
-  if (!state.syncActive || !state.folders.some((folder) => folder.enabled)) return;
+  if (!hasEnabledSyncFolders(state)) return;
+
+  state.lastRetryRequestedAt = new Date().toISOString();
+  state.retryReason = state.lastError || state.lastResult?.lastError || 'Folder sync will retry automatically.';
+  await writeOfflineSyncState(state);
+  await registerOfflineSyncTaskAsync();
 
   offlineSyncRetryTimer = setTimeout(async () => {
     offlineSyncRetryTimer = null;
 
     try {
       const latestState = await readOfflineSyncState();
-      if (!latestState.syncActive || !latestState.folders.some((folder) => folder.enabled)) return;
+      if (!hasEnabledSyncFolders(latestState)) return;
 
       await registerOfflineSyncTaskAsync();
       await runOfflineFolderSync();
     } catch (error) {
-      if (isNetworkSyncError(error)) {
-        await scheduleOfflineSyncRetry();
-      }
+      const failedState = await readOfflineSyncState();
+      failedState.lastError = uploadErrorMessage(error);
+      failedState.retryReason = failedState.lastError;
+      await writeOfflineSyncState(failedState);
+      await scheduleOfflineSyncRetry();
     }
   }, NETWORK_RETRY_DELAY_MS);
 };
@@ -495,12 +525,13 @@ export const runOfflineFolderSync = async ({ folderIds = null, onProgress } = {}
         await writeOfflineSyncState(state);
       }
 
-      const maxBytes = Number(folder.storageMb || DEFAULT_DEVICE_STORAGE_MB) * MB;
-      let { usedBytes } = await getCloudUsage({
+      let cloudUsage = await getCloudUsage({
         userId: folder.userId,
         deviceId: folder.deviceId,
-        maxBytes,
+        maxBytes: Number(folder.storageMb || DEFAULT_DEVICE_STORAGE_MB) * MB,
       });
+      let usedBytes = cloudUsage.usedBytes;
+      let maxBytes = cloudUsage.maxBytes;
       const files = folder.isExternal && Platform.OS === 'android' && SAF
         ? await collectFilesSaf(folder.path)
         : await collectFiles(folder.path);
@@ -516,6 +547,19 @@ export const runOfflineFolderSync = async ({ folderIds = null, onProgress } = {}
         if (state.syncedFiles[syncKey]?.signature === file.signature) {
           result.skippedFiles += 1;
           continue;
+        }
+
+        cloudUsage = await getCloudUsage({
+          userId: folder.userId,
+          deviceId: folder.deviceId,
+          maxBytes,
+        });
+        usedBytes = cloudUsage.usedBytes;
+        maxBytes = cloudUsage.maxBytes;
+
+        if (usedBytes >= maxBytes) {
+          result.storageFull = true;
+          throw new OfflineSyncStorageFullError();
         }
 
         if (usedBytes + file.size > maxBytes) {
@@ -609,7 +653,7 @@ export const runOfflineFolderSync = async ({ folderIds = null, onProgress } = {}
   await writeOfflineSyncState(state);
   syncCancelled = false;
 
-  if (result.networkError && !result.cancelled) {
+  if (shouldRetrySyncResult(result)) {
     await scheduleOfflineSyncRetry();
   }
 
@@ -642,18 +686,17 @@ export const registerOfflineSyncTaskAsync = async () => {
 
 export const restoreOfflineSyncTaskAsync = async () => {
   const state = await readOfflineSyncState();
-  const hasEnabledFolders = state.syncActive && state.folders.some((folder) => folder.enabled);
+  const hasEnabledFolders = hasEnabledSyncFolders(state);
 
   if (!hasEnabledFolders) return false;
 
-  if (
-    state.lastResult?.networkError
-    || state.folders.some((folder) => folder.enabled && folder.status === 'waiting_network')
-  ) {
+  await registerOfflineSyncTaskAsync();
+
+  if (hasRetryableSyncState(state)) {
     await scheduleOfflineSyncRetry();
   }
 
-  return registerOfflineSyncTaskAsync();
+  return true;
 };
 
 if (!TaskManager.isTaskDefined(OFFLINE_SYNC_TASK_NAME)) {
@@ -661,7 +704,7 @@ if (!TaskManager.isTaskDefined(OFFLINE_SYNC_TASK_NAME)) {
     try {
       const result = await runOfflineFolderSync();
 
-      return result.cancelled
+      return result.cancelled || shouldRetrySyncResult(result)
         ? BackgroundTask.BackgroundTaskResult.Failed
         : BackgroundTask.BackgroundTaskResult.Success;
     } catch (error) {
