@@ -15,6 +15,7 @@ class FileShareTest extends TestCase
     {
         parent::setUp();
 
+        Schema::dropIfExists('devices');
         Schema::dropIfExists('users');
         Schema::create('users', function (Blueprint $table) {
             $table->id();
@@ -31,6 +32,7 @@ class FileShareTest extends TestCase
 
     protected function tearDown(): void
     {
+        Schema::dropIfExists('devices');
         Schema::dropIfExists('users');
 
         parent::tearDown();
@@ -104,6 +106,49 @@ class FileShareTest extends TestCase
             ->assertJsonPath('message', 'Choose another device, not the current device.');
     }
 
+    public function test_file_can_be_shared_to_desktop_device_when_devices_table_has_no_storage_expiry_column(): void
+    {
+        Storage::fake('local');
+        $this->createLegacyDevicesTable();
+
+        $user = User::factory()->create([
+            'id' => 1,
+            'name' => 'Test User',
+            'username' => 'testuser',
+            'phone_number' => '08011111111',
+        ]);
+
+        $sourcePath = "uploads/{$user->id}/android-device/document.txt";
+        Storage::disk('local')->put($sourcePath, 'hello');
+
+        $response = $this->postJson('/api/files/share', [
+            'user_id' => (string) $user->id,
+            'device_id' => 'android-device',
+            'recipient_phone_number' => 'win-pc-00001-7791',
+            'items' => [
+                [
+                    'path' => $sourcePath,
+                    'type' => 'file',
+                    'name' => 'document.txt',
+                ],
+            ],
+        ]);
+
+        $response->assertOk()
+            ->assertJsonPath('message', 'Successfully shared 1 item(s) with Test User.');
+
+        $this->assertDatabaseHas('devices', [
+            'user_id' => $user->id,
+            'device_id' => 'win-pc-00001-7791',
+            'phone_number' => 'win-pc-00001-7791',
+            'storage' => 200,
+        ]);
+
+        Storage::disk('local')->assertExists(
+            "uploads/{$user->id}/win-pc-00001-7791/Shared with me/From Test User/document.txt"
+        );
+    }
+
     public function test_file_manager_upload_stores_file(): void
     {
         Storage::fake('local');
@@ -157,5 +202,42 @@ class FileShareTest extends TestCase
             ->assertJsonPath('folder.folder_path', 'Documents');
 
         Storage::disk('local')->assertExists('uploads/cloud-user/android-device/Documents');
+    }
+
+    public function test_file_preview_streams_inline_and_supports_byte_ranges(): void
+    {
+        Storage::fake('local');
+        Storage::disk('local')->put('uploads/cloud-user/android-device/video.mp4', '0123456789');
+
+        $inlineResponse = $this->get('/api/files/preview?user_id=cloud-user&device_id=android-device&path=' . rawurlencode('uploads/cloud-user/android-device/video.mp4'));
+
+        $inlineResponse->assertOk()
+            ->assertHeader('Content-Type', 'video/mp4')
+            ->assertHeader('Accept-Ranges', 'bytes')
+            ->assertHeader('Content-Disposition', 'inline; filename="video.mp4"');
+
+        $rangeResponse = $this->withHeader('Range', 'bytes=2-5')
+            ->get('/api/files/preview?user_id=cloud-user&device_id=android-device&path=' . rawurlencode('uploads/cloud-user/android-device/video.mp4'));
+
+        $rangeResponse->assertStatus(206)
+            ->assertHeader('Content-Range', 'bytes 2-5/10')
+            ->assertHeader('Content-Length', '4');
+    }
+
+    private function createLegacyDevicesTable(): void
+    {
+        Schema::create('devices', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('user_id')->constrained()->cascadeOnDelete();
+            $table->string('device_id');
+            $table->string('name')->nullable();
+            $table->string('os', 30)->nullable();
+            $table->string('phone_number', 50)->nullable()->unique();
+            $table->unsignedInteger('storage')->default(200);
+            $table->timestamps();
+
+            $table->unique(['user_id', 'device_id']);
+            $table->index('phone_number');
+        });
     }
 }

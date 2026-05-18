@@ -30,6 +30,7 @@ class DeviceController extends Controller
 
         $now = now();
         $synced = 0;
+        $hasStorageExpiryColumn = Schema::hasColumn('devices', 'storage_expires_at');
 
         foreach ($validated['devices'] as $device) {
             $os = $this->normalizeOs((string) ($device['os'] ?? ''));
@@ -38,21 +39,25 @@ class DeviceController extends Controller
                 $os,
                 (string) ($device['phone_number'] ?? '')
             );
+            $values = [
+                'name' => $device['name'] ?? null,
+                'os' => $os ?: ($device['os'] ?? null),
+                'phone_number' => $phoneNumber,
+                'storage' => (int) ($device['storage'] ?? self::DEFAULT_DEVICE_STORAGE_MB),
+                'updated_at' => $now,
+                'created_at' => $now,
+            ];
+
+            if ($hasStorageExpiryColumn) {
+                $values['storage_expires_at'] = $device['storage_expires_at'] ?? null;
+            }
 
             DB::table('devices')->updateOrInsert(
                 [
                     'user_id' => $validated['user_id'],
                     'device_id' => $device['device_id'],
                 ],
-                [
-                    'name' => $device['name'] ?? null,
-                    'os' => $os ?: ($device['os'] ?? null),
-                    'phone_number' => $phoneNumber,
-                    'storage' => (int) ($device['storage'] ?? self::DEFAULT_DEVICE_STORAGE_MB),
-                    'storage_expires_at' => $device['storage_expires_at'] ?? null,
-                    'updated_at' => $now,
-                    'created_at' => $now,
-                ]
+                $values
             );
 
             $synced++;

@@ -9,6 +9,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Throwable;
@@ -273,17 +274,22 @@ class AuthController extends Controller
                 ? $this->generateUniqueDevicePhoneNumber($user, $os)
                 : $deviceId;
 
-            DB::table('devices')->insert([
+            $values = [
                 'user_id' => $user->id,
                 'device_id' => $deviceId,
                 'name' => $template['name'],
                 'os' => $os,
                 'phone_number' => $phoneNumber,
                 'storage' => self::DEFAULT_DEVICE_STORAGE_MB,
-                'storage_expires_at' => null,
                 'created_at' => $now,
                 'updated_at' => $now,
-            ]);
+            ];
+
+            if (Schema::hasColumn('devices', 'storage_expires_at')) {
+                $values['storage_expires_at'] = null;
+            }
+
+            DB::table('devices')->insert($values);
         }
     }
 

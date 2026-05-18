@@ -93,6 +93,7 @@ class FileUploadController extends Controller
             'user_id' => ['required', 'string', 'max:255'],
             'device_id' => ['required', 'string', 'max:255'],
             'folder_path' => ['nullable', 'string', 'max:500'],
+            'source' => ['nullable', 'string', 'max:255'],
         ]);
 
         $file = $request->file('file');
@@ -161,10 +162,19 @@ class FileUploadController extends Controller
         $folderPath = $this->sanitizeFolderPath($validated['folder_path'] ?? '');
         $basePath = trim("uploads/{$validated['user_id']}/{$validated['device_id']}/{$folderPath}", '/');
         $originalName = $this->sanitizeName($validated['file_name']) ?: 'file';
-        $filename = $this->uniqueFilename($basePath, $originalName);
-        $storedPath = trim("{$basePath}/{$filename}", '/');
         $disk = Storage::disk('local');
-        $storageCheck = $this->canStoreIncomingBytes($validated['user_id'], $validated['device_id'], strlen($contents));
+        $syncUpload = ($validated['source'] ?? '') === 'folder_sync';
+        $syncPath = trim("{$basePath}/{$originalName}", '/');
+        $filename = $syncUpload && $disk->exists($syncPath)
+            ? $originalName
+            : $this->uniqueFilename($basePath, $originalName);
+        $storedPath = trim("{$basePath}/{$filename}", '/');
+        $previousSize = $disk->exists($storedPath) ? (int) $disk->size($storedPath) : 0;
+        $storageCheck = $this->canStoreIncomingBytes(
+            $validated['user_id'],
+            $validated['device_id'],
+            max(0, strlen($contents) - $previousSize)
+        );
 
         if (! $storageCheck['ok']) {
             return response()->json([
@@ -574,6 +584,23 @@ class FileUploadController extends Controller
         ]);
     }
 
+    public function preview(Request $request): StreamedResponse
+    {
+        $validated = $request->validate([
+            'user_id' => ['required', 'string', 'max:255'],
+            'device_id' => ['required', 'string', 'max:255'],
+            'path' => ['required', 'string', 'max:1000'],
+        ]);
+
+        $disk = Storage::disk('local');
+        $path = $this->resolveManagedPath($validated['user_id'], $validated['device_id'], $validated['path']);
+
+        abort_unless($disk->exists($path), 404, 'File not found.');
+        abort_if($this->isDirectoryPath($disk, $path), 422, 'Folders cannot be previewed.');
+
+        return $this->streamInlineFile($request, $disk, $path);
+    }
+
     public function share(Request $request): JsonResponse
     {
         $validated = $request->validate([
@@ -790,21 +817,25 @@ class FileUploadController extends Controller
         $os = strtolower($matches[1]) === 'mac-pc' ? 'macos' : 'windows';
         $name = $os === 'macos' ? 'Mac Cloud OS' : 'Windows Cloud OS';
         $now = now();
+        $values = [
+            'name' => $name,
+            'os' => $os,
+            'phone_number' => $deviceId,
+            'storage' => self::DEFAULT_DEVICE_STORAGE_MB,
+            'updated_at' => $now,
+            'created_at' => $now,
+        ];
+
+        if (Schema::hasColumn('devices', 'storage_expires_at')) {
+            $values['storage_expires_at'] = null;
+        }
 
         DB::table('devices')->updateOrInsert(
             [
                 'user_id' => $user->id,
                 'device_id' => $deviceId,
             ],
-            [
-                'name' => $name,
-                'os' => $os,
-                'phone_number' => $deviceId,
-                'storage' => self::DEFAULT_DEVICE_STORAGE_MB,
-                'storage_expires_at' => null,
-                'updated_at' => $now,
-                'created_at' => $now,
-            ]
+            $values
         );
 
         return [
@@ -1082,6 +1113,70 @@ class FileUploadController extends Controller
         } catch (\Throwable $exception) {
             return false;
         }
+    }
+
+    private function streamInlineFile(Request $request, $disk, string $path): StreamedResponse
+    {
+        $size = (int) $disk->size($path);
+        $start = 0;
+        $end = max(0, $size - 1);
+        $status = 200;
+        $headers = [
+            'Content-Type' => $this->safeMimeType($disk, $path),
+            'Accept-Ranges' => 'bytes',
+            'Cache-Control' => 'public, max-age=3600',
+            'Content-Disposition' => 'inline; filename="' . addslashes(basename($path)) . '"',
+        ];
+
+        $range = (string) $request->header('Range', '');
+        if (preg_match('/bytes=(\d*)-(\d*)/', $range, $matches)) {
+            if ($matches[1] !== '') {
+                $start = (int) $matches[1];
+            }
+
+            if ($matches[2] !== '') {
+                $end = min((int) $matches[2], $end);
+            }
+
+            if ($matches[1] === '' && $matches[2] !== '') {
+                $suffixLength = min((int) $matches[2], $size);
+                $start = max(0, $size - $suffixLength);
+                $end = max(0, $size - 1);
+            }
+
+            if ($start > $end || $start >= $size) {
+                abort(416, 'Requested range not satisfiable.');
+            }
+
+            $status = 206;
+            $headers['Content-Range'] = "bytes {$start}-{$end}/{$size}";
+        }
+
+        $length = max(0, $end - $start + 1);
+        $headers['Content-Length'] = (string) $length;
+
+        return response()->stream(function () use ($disk, $path, $start, $length) {
+            $stream = fopen($disk->path($path), 'rb');
+            abort_unless($stream !== false, 404, 'Unable to open file stream.');
+
+            try {
+                fseek($stream, $start);
+                $remaining = $length;
+
+                while ($remaining > 0 && ! feof($stream)) {
+                    $chunkSize = min(8192, $remaining);
+                    $chunk = fread($stream, $chunkSize);
+                    if ($chunk === false || $chunk === '') {
+                        break;
+                    }
+
+                    echo $chunk;
+                    $remaining -= strlen($chunk);
+                }
+            } finally {
+                fclose($stream);
+            }
+        }, $status, $headers);
     }
 
     private function safeMimeType($disk, string $path): string

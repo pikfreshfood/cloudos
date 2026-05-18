@@ -74,6 +74,7 @@ Route::post('/files/move', [FileUploadController::class, 'move']);
 Route::post('/files/copy', [FileUploadController::class, 'copy']);
 Route::delete('/files', [FileUploadController::class, 'destroy']);
 Route::get('/files/download', [FileUploadController::class, 'download']);
+Route::get('/files/preview', [FileUploadController::class, 'preview']);
 Route::get('/media/music', [MediaController::class, 'music']);
 Route::get('/media/images', [MediaController::class, 'images']);
 Route::delete('/media', [MediaController::class, 'destroy']);
