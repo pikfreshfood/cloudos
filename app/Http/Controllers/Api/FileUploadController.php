@@ -599,6 +599,17 @@ class FileUploadController extends Controller
             ? User::find($validated['recipient_user_id'])
             : null;
 
+        if (!$recipient && $recipientDeviceId && Schema::hasTable('devices')) {
+            $recipientDevice = DB::table('devices')
+                ->where('device_id', $recipientDeviceId)
+                ->first();
+
+            if ($recipientDevice) {
+                $recipient = User::find($recipientDevice->user_id);
+                $recipientDeviceId = $recipientDevice->device_id;
+            }
+        }
+
         if (!$recipient && Schema::hasTable('devices')) {
             $recipientDevice = DB::table('devices')
                 ->where('device_id', $recipientPhoneInput)
@@ -623,6 +634,16 @@ class FileUploadController extends Controller
             if ($recipientDevice) {
                 $recipient = User::find($recipientDevice->user_id);
                 $recipientDeviceId = $recipientDevice->device_id;
+            }
+        }
+
+        if (!$recipient && Schema::hasTable('devices')) {
+            $desktopDevice = $this->resolveDesktopDeviceId($recipientPhoneInput);
+
+            if ($desktopDevice) {
+                $recipient = $desktopDevice['user'];
+                $recipientDeviceId = $desktopDevice['device_id'];
+                $recipientDevice = $desktopDevice['device'];
             }
         }
 
@@ -752,6 +773,48 @@ class FileUploadController extends Controller
         return response()->json([
             'message' => "Successfully shared {$sharedCount} item(s) with {$recipient->name}.",
         ]);
+    }
+
+    private function resolveDesktopDeviceId(string $deviceId): ?array
+    {
+        $deviceId = trim($deviceId);
+        if (! preg_match('/^(win-pc|mac-pc)-0*(\d+)-\d{4}$/i', $deviceId, $matches)) {
+            return null;
+        }
+
+        $user = User::find((int) $matches[2]);
+        if (! $user) {
+            return null;
+        }
+
+        $os = strtolower($matches[1]) === 'mac-pc' ? 'macos' : 'windows';
+        $name = $os === 'macos' ? 'Mac Cloud OS' : 'Windows Cloud OS';
+        $now = now();
+
+        DB::table('devices')->updateOrInsert(
+            [
+                'user_id' => $user->id,
+                'device_id' => $deviceId,
+            ],
+            [
+                'name' => $name,
+                'os' => $os,
+                'phone_number' => $deviceId,
+                'storage' => self::DEFAULT_DEVICE_STORAGE_MB,
+                'storage_expires_at' => null,
+                'updated_at' => $now,
+                'created_at' => $now,
+            ]
+        );
+
+        return [
+            'user' => $user,
+            'device_id' => $deviceId,
+            'device' => DB::table('devices')
+                ->where('user_id', $user->id)
+                ->where('device_id', $deviceId)
+                ->first(),
+        ];
     }
 
     private function findDeviceByPhoneNumber(string $phoneInput, string $phoneDigits): ?object
