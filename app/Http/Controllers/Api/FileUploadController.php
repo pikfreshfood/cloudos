@@ -718,10 +718,46 @@ class FileUploadController extends Controller
 
         if (!$recipientDeviceId) {
             if (Schema::hasTable('devices')) {
-                $recipientDevice = DB::table('devices')
+                $recipientDevices = DB::table('devices')
                     ->where('user_id', $recipient->id)
-                    ->orderByRaw("CASE WHEN device_id = 'cloud' THEN 0 ELSE 1 END")
-                    ->first();
+                    ->get();
+
+                foreach ($recipientDevices as $candidate) {
+                    $candidatePhoneDigits = preg_replace('/\D+/', '', (string) ($candidate->phone_number ?? ''));
+                    $candidateDeviceId = strtolower((string) ($candidate->device_id ?? ''));
+                    $normalizedInput = strtolower(trim($recipientPhoneInput));
+
+                    if ($candidateDeviceId !== '' && $candidateDeviceId === $normalizedInput) {
+                        $recipientDevice = $candidate;
+                        break;
+                    }
+
+                    if ($recipientDigits !== '' && $candidatePhoneDigits !== '') {
+                        $matchesPhone = $candidatePhoneDigits === $recipientDigits
+                            || str_contains($candidatePhoneDigits, $recipientDigits)
+                            || str_contains($recipientDigits, $candidatePhoneDigits);
+
+                        if ($matchesPhone && strlen($candidatePhoneDigits) >= 7 && strlen($recipientDigits) >= 7) {
+                            $recipientDevice = $candidate;
+                            break;
+                        }
+                    }
+                }
+
+                if (!$recipientDevice) {
+                    $recipientDevice = $recipientDevices
+                        ->sortBy(function ($candidate) {
+                            $os = strtolower((string) ($candidate->os ?? ''));
+                            if (in_array($os, ['android', 'ios'], true)) {
+                                return 0;
+                            }
+                            if (($candidate->device_id ?? '') !== 'cloud') {
+                                return 1;
+                            }
+                            return 2;
+                        })
+                        ->first();
+                }
             }
 
             $recipientDeviceId = $recipientDevice ? $recipientDevice->device_id : 'cloud';
