@@ -622,9 +622,7 @@ class FileUploadController extends Controller
         $recipientDeviceId = $validated['recipient_device_id'] ?? null;
         $recipientDevice = null;
 
-        $recipient = isset($validated['recipient_user_id'])
-            ? User::find($validated['recipient_user_id'])
-            : null;
+        $recipient = null;
 
         if (!$recipient && $recipientDeviceId && Schema::hasTable('devices')) {
             $recipientDevice = DB::table('devices')
@@ -708,6 +706,10 @@ class FileUploadController extends Controller
             $recipient = User::where('username', 'like', "%$recipientPhoneInput%")
                 ->orWhere('name', 'like', "%$recipientPhoneInput%")
                 ->first();
+        }
+
+        if (!$recipient && isset($validated['recipient_user_id'])) {
+            $recipient = User::find($validated['recipient_user_id']);
         }
 
         if (!$recipient) {
