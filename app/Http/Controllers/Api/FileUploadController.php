@@ -960,6 +960,14 @@ class FileUploadController extends Controller
             return $candidate;
         }
 
+        if (str_starts_with($candidate, 'uploads/')) {
+            abort(422, 'Invalid path.');
+        }
+
+        if ($candidate !== '') {
+            return trim("{$root}/{$candidate}", '/');
+        }
+
         abort(422, 'Invalid path.');
     }
 
