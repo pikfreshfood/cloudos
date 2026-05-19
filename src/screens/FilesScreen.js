@@ -104,6 +104,33 @@ export default function FilesScreen({ navigation }) {
   const isAudioFile = (name = '') => ['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg'].includes(getFileExtension(name));
   const isVideoFile = (name = '') => ['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(getFileExtension(name));
   const isMediaFile = (name = '') => isImageFile(name) || isAudioFile(name) || isVideoFile(name);
+  const getMimeTypeForFile = (name = '') => {
+    const extension = getFileExtension(name);
+    const mimeTypes = {
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      png: 'image/png',
+      gif: 'image/gif',
+      webp: 'image/webp',
+      mp3: 'audio/mpeg',
+      wav: 'audio/wav',
+      m4a: 'audio/mp4',
+      aac: 'audio/aac',
+      flac: 'audio/flac',
+      ogg: 'audio/ogg',
+      mp4: 'video/mp4',
+      mov: 'video/quicktime',
+      avi: 'video/x-msvideo',
+      mkv: 'video/x-matroska',
+      webm: 'video/webm',
+      pdf: 'application/pdf',
+      txt: 'text/plain',
+      doc: 'application/msword',
+      docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      apk: 'application/vnd.android.package-archive',
+    };
+    return mimeTypes[extension] || 'application/octet-stream';
+  };
 
   useEffect(() => () => {
     try {
@@ -1141,6 +1168,56 @@ export default function FilesScreen({ navigation }) {
     return localTargetPath;
   };
 
+  const ensureCloudPathForShare = async (item, index, total) => {
+    if (item.remotePath) {
+      return item.remotePath;
+    }
+
+    if (!hasApiContext) {
+      throw new Error('Sign in before sharing files to another device.');
+    }
+
+    if (item.type === 'folder') {
+      throw new Error('Local folders must be uploaded to Cloud Files before sharing.');
+    }
+
+    setUploadState({
+      visible: true,
+      currentFileName: item.name,
+      completedFiles: index,
+      totalFiles: total,
+      progress: total ? index / total : 0,
+    });
+
+    const response = await fileService.upload({
+      uri: item.path,
+      name: item.name,
+      mimeType: item.mimeType || getMimeTypeForFile(item.name),
+      userId: currentUser.id,
+      deviceId: currentDevice.id,
+      folderPath: 'Shared uploads',
+      onUploadProgress: (event) => {
+        if (!event?.total) return;
+        const fileProgress = event.loaded / event.total;
+        setUploadState((prev) => ({
+          ...prev,
+          currentFileName: item.name,
+          completedFiles: index,
+          progress: prev.totalFiles
+            ? Math.min((index + fileProgress) / prev.totalFiles, 1)
+            : fileProgress,
+        }));
+      },
+    });
+
+    const cloudPath = response?.file?.path;
+    if (!cloudPath) {
+      throw new Error('The file was uploaded but the server did not return a cloud path.');
+    }
+
+    return cloudPath;
+  };
+
   const handleAddPress = () => {
     if (activeFileTab !== 'cloud') {
       return;
@@ -1550,6 +1627,23 @@ export default function FilesScreen({ navigation }) {
 
       setShareProgress(0.5);
 
+      const shareItems = [];
+      for (let index = 0; index < itemsToShare.length; index++) {
+        const item = itemsToShare[index];
+        const cloudPath = await ensureCloudPathForShare(item, index, itemsToShare.length);
+        shareItems.push({
+          path: cloudPath,
+          type: item.type,
+          name: item.name,
+        });
+      }
+      setUploadState((prev) => ({
+        ...prev,
+        completedFiles: prev.totalFiles,
+        progress: prev.totalFiles ? 1 : prev.progress,
+      }));
+      setShareProgress(0.75);
+
       // 2. Perform the share
       const shareResponse = await fileService.share({
         userId: currentUser.id,
@@ -1558,11 +1652,7 @@ export default function FilesScreen({ navigation }) {
         recipientUserId: localRecipientDevice?.userId,
         recipientDeviceId: localRecipientDevice?.deviceId || (looksLikePcId ? recipientInput : null),
         recipientDeviceStorage: localRecipientDevice?.storage,
-        items: itemsToShare.map(item => ({
-          path: item.remotePath || item.path,
-          type: item.type,
-          name: item.name,
-        })),
+        items: shareItems,
       });
 
       setShareProgress(1);
@@ -1574,12 +1664,15 @@ export default function FilesScreen({ navigation }) {
         setIsSelectionMode(false);
         setSelectedFiles([]);
         setActionModalVisible(false);
+        resetUploadState();
+        loadFiles(currentPath);
         Alert.alert('Success', shareResponse.message);
       }, 500);
 
     } catch (error) {
       console.log('Sharing error:', error?.response?.data || error?.message || error);
       setIsSharing(false);
+      resetUploadState();
       const message = error?.response?.data?.message
         || (error?.response?.status === 404
           ? 'The recipient phone number or PC ID was not found. Confirm the PC ID shown on the desktop login screen and try again.'
