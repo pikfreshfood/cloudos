@@ -771,9 +771,17 @@ class FileUploadController extends Controller
         
         // 1. Calculate incoming size
         $totalIncomingSize = 0;
+        $resolvedItems = [];
+        $missingItems = [];
         foreach ($validated['items'] as $item) {
             $sourcePath = $this->resolveManagedPath($validated['user_id'], $validated['device_id'], $item['path']);
-            if (!$disk->exists($sourcePath)) continue;
+            if (!$disk->exists($sourcePath)) {
+                $missingItems[] = [
+                    'name' => $item['name'] ?? basename((string) $item['path']),
+                    'path' => $item['path'],
+                ];
+                continue;
+            }
             
             if ($item['type'] === 'folder') {
                 foreach ($disk->allFiles($sourcePath) as $f) {
@@ -782,6 +790,18 @@ class FileUploadController extends Controller
             } else {
                 $totalIncomingSize += $disk->size($sourcePath);
             }
+
+            $resolvedItems[] = [
+                'item' => $item,
+                'source_path' => $sourcePath,
+            ];
+        }
+
+        if (empty($resolvedItems)) {
+            return response()->json([
+                'message' => 'Sharing failed. Cloud OS could not find the selected file or folder. Upload or refresh the file list, then try again.',
+                'missing_items' => $missingItems,
+            ], 422);
         }
 
         $recipientUsed = $this->getDeviceUsedSpace($recipient->id, $recipientDeviceId);
@@ -811,10 +831,9 @@ class FileUploadController extends Controller
         }
 
         $sharedCount = 0;
-        foreach ($validated['items'] as $item) {
-            $sourcePath = $this->resolveManagedPath($validated['user_id'], $validated['device_id'], $item['path']);
-            
-            if (!$disk->exists($sourcePath)) continue;
+        foreach ($resolvedItems as $resolvedItem) {
+            $item = $resolvedItem['item'];
+            $sourcePath = $resolvedItem['source_path'];
 
             // Destination: Shared with me / From Sender Name / ...
             $senderFolderName = "From " . ($sender->name ?: "User " . $sender->id);
@@ -833,6 +852,13 @@ class FileUploadController extends Controller
 
             $this->copyManagedItem($disk, $sourcePath, $destinationPath, $item['type']);
             $sharedCount++;
+        }
+
+        if ($sharedCount < 1) {
+            return response()->json([
+                'message' => 'Sharing failed. No file or folder was copied.',
+                'missing_items' => $missingItems,
+            ], 422);
         }
 
         return response()->json([
