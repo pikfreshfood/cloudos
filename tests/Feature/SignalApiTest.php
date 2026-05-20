@@ -107,4 +107,23 @@ class SignalApiTest extends TestCase
             ->assertJsonPath('0.receiver', 'mac-pc-00001-4321')
             ->assertJsonPath('0.callType', 'voice');
     }
+
+    public function test_signal_can_be_received_when_mobile_sends_digit_only_desktop_number(): void
+    {
+        $this->postJson('/api/signals', [
+            'type' => 'send',
+            'sender' => '07061080002',
+            'receiver' => '000017546',
+            'signalType' => 'offer',
+            'data' => json_encode(['callType' => 'video']),
+        ])->assertOk();
+
+        $this->postJson('/api/signals', [
+            'type' => 'peek',
+            'user' => 'win-pc-00001-7546',
+        ])->assertOk()
+            ->assertJsonPath('0.sender', '07061080002')
+            ->assertJsonPath('0.receiver', '000017546')
+            ->assertJsonPath('0.callType', 'video');
+    }
 }

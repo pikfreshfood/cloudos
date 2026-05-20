@@ -112,7 +112,8 @@ class SignalController extends Controller
     {
         $canonical = $this->normalizePhone($value);
         $compact = $this->compactNumber($canonical);
-        $aliases = [$canonical, $compact];
+        $digits = preg_replace('/\D+/', '', $canonical) ?? '';
+        $aliases = [$canonical, $compact, $digits];
 
         if (preg_match('/^(win|mac)-pc-(\d+)-(\d{4})$/', $canonical, $matches)) {
             $aliases[] = "pc-{$matches[1]}-{$matches[2]}-{$matches[3]}";
