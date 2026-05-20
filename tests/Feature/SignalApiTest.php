@@ -59,4 +59,29 @@ class SignalApiTest extends TestCase
         ])->assertOk()
             ->assertJsonCount(0);
     }
+
+    public function test_signal_accepts_desktop_device_numbers(): void
+    {
+        $this->postJson('/api/signals', [
+            'type' => 'send',
+            'sender' => 'win-pc-00001-1234',
+            'receiver' => 'mac-pc-00001-4321',
+            'signalType' => 'offer',
+            'data' => json_encode(['callType' => 'video']),
+        ])->assertOk()
+            ->assertJsonPath('message', 'sent');
+
+        $this->postJson('/api/signals', [
+            'type' => 'peek',
+            'user' => 'mac-pc-00001-4321',
+        ])->assertOk()
+            ->assertJsonPath('0.sender', 'winpc000011234')
+            ->assertJsonPath('0.receiver', 'macpc000014321')
+            ->assertJsonPath('0.kind', 'cloudos_webrtc_call')
+            ->assertJsonPath('0.action', 'open_cloudos_call')
+            ->assertJsonPath('0.callerDeviceNumber', 'winpc000011234')
+            ->assertJsonPath('0.useSystemDialer', false)
+            ->assertJsonPath('0.isCloudOsCall', true)
+            ->assertJsonPath('0.callType', 'video');
+    }
 }

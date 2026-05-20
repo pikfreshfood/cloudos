@@ -73,14 +73,7 @@ class SignalController extends Controller
                 ->where('receiver_phone_number', $user)
                 ->orderBy('id')
                 ->get()
-                ->map(fn ($signal) => [
-                    'id' => $signal->id,
-                    'sender' => $signal->sender_phone_number,
-                    'receiver' => $signal->receiver_phone_number,
-                    'type' => $signal->type,
-                    'data' => $signal->data,
-                    'created_at' => $signal->created_at,
-                ])
+                ->map(fn ($signal) => $this->mapSignal($signal))
                 ->values();
 
             $shouldDelete = $validated['type'] === 'receive' && ($validated['delete'] ?? true);
@@ -99,7 +92,44 @@ class SignalController extends Controller
 
     private function normalizePhone(string $value): string
     {
-        return preg_replace('/\D+/', '', trim($value)) ?? '';
+        return strtolower(preg_replace('/[^A-Za-z0-9]+/', '', trim($value)) ?? '');
+    }
+
+    private function mapSignal(object $signal): array
+    {
+        $mapped = [
+            'id' => $signal->id,
+            'sender' => $signal->sender_phone_number,
+            'receiver' => $signal->receiver_phone_number,
+            'type' => $signal->type,
+            'data' => $signal->data,
+            'created_at' => $signal->created_at,
+        ];
+
+        if ($signal->type !== 'offer') {
+            return $mapped;
+        }
+
+        $data = json_decode((string) $signal->data, true);
+        $callType = ($data['callType'] ?? null) === 'voice' ? 'voice' : 'video';
+        $callUrl = url('/device-call') . '?' . http_build_query([
+            'mode' => 'incoming',
+            'user' => $signal->receiver_phone_number,
+            'target' => $signal->sender_phone_number,
+            'call_type' => $callType,
+        ]);
+
+        return array_merge($mapped, [
+            'kind' => 'cloudos_webrtc_call',
+            'action' => 'open_cloudos_call',
+            'callerDeviceNumber' => $signal->sender_phone_number,
+            'receiverDeviceNumber' => $signal->receiver_phone_number,
+            'callType' => $callType,
+            'callUrl' => $callUrl,
+            'url' => $callUrl,
+            'useSystemDialer' => false,
+            'isCloudOsCall' => true,
+        ]);
     }
 
     private function signalsTableIsAvailable(): bool

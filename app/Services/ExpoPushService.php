@@ -15,10 +15,15 @@ class ExpoPushService
     public function sendCallNotification(string $receiverPhoneNumber, string $callerPhoneNumber, string $callType = 'video'): void
     {
         $callType = $callType === 'voice' ? 'voice' : 'video';
+        $receiverDeviceNumber = $this->normalizeCloudNumber($receiverPhoneNumber);
+        $callerDeviceNumber = $this->normalizeCloudNumber($callerPhoneNumber);
+        $callerIsTelephoneNumber = $this->isTelephoneNumber($callerPhoneNumber);
+        $callUrl = $this->deviceCallUrl($receiverDeviceNumber, $callerDeviceNumber, $callType);
+        $callerLabel = $callerIsTelephoneNumber ? $callerPhoneNumber : "Cloud OS device {$callerDeviceNumber}";
 
         $this->sendToPhoneNumber($receiverPhoneNumber, [
             'title' => $callType === 'voice' ? 'Incoming voice call' : 'Incoming video call',
-            'body' => "Call from {$callerPhoneNumber}",
+            'body' => "Call from {$callerLabel}",
             'sound' => 'default',
             'priority' => 'high',
             'channelId' => 'incoming-calls',
@@ -26,9 +31,19 @@ class ExpoPushService
             'ttl' => 60,
             'interruptionLevel' => 'time-sensitive',
             'data' => [
-                'kind' => 'call',
-                'callerPhoneNumber' => $callerPhoneNumber,
+                'kind' => 'cloudos_webrtc_call',
+                'action' => 'open_cloudos_call',
+                'callerPhoneNumber' => $callerIsTelephoneNumber ? $this->normalizeTelephoneNumber($callerPhoneNumber) : '',
+                'callerDeviceNumber' => $callerDeviceNumber,
+                'callerCloudNumber' => $callerDeviceNumber,
+                'receiverDeviceNumber' => $receiverDeviceNumber,
+                'receiverCloudNumber' => $receiverDeviceNumber,
                 'callType' => $callType,
+                'callUrl' => $callUrl,
+                'url' => $callUrl,
+                'webUrl' => $callUrl,
+                'useSystemDialer' => false,
+                'isCloudOsCall' => true,
             ],
         ]);
     }
@@ -144,7 +159,7 @@ class ExpoPushService
                 return;
             }
 
-            $normalizedPhoneNumber = preg_replace('/\D+/', '', $phoneNumber) ?? '';
+            $normalizedPhoneNumber = $this->normalizeCloudNumber($phoneNumber);
             if ($normalizedPhoneNumber === '') {
                 Log::info('Expo push skipped: empty receiver phone number.');
                 return;
@@ -210,5 +225,36 @@ class ExpoPushService
             ->filter()
             ->unique()
             ->values();
+    }
+
+    private function normalizeCloudNumber(string $value): string
+    {
+        return strtolower(preg_replace('/[^A-Za-z0-9]+/', '', trim($value)) ?? '');
+    }
+
+    private function normalizeTelephoneNumber(string $value): string
+    {
+        return preg_replace('/\D+/', '', trim($value)) ?? '';
+    }
+
+    private function isTelephoneNumber(string $value): bool
+    {
+        $trimmed = trim($value);
+        if ($trimmed === '') {
+            return false;
+        }
+
+        return preg_match('/^\+?\d[\d\s().-]{2,}$/', $trimmed) === 1
+            && $this->normalizeTelephoneNumber($trimmed) !== '';
+    }
+
+    private function deviceCallUrl(string $receiverDeviceNumber, string $callerDeviceNumber, string $callType): string
+    {
+        return url('/device-call') . '?' . http_build_query([
+            'mode' => 'incoming',
+            'user' => $receiverDeviceNumber,
+            'target' => $callerDeviceNumber,
+            'call_type' => $callType,
+        ]);
     }
 }

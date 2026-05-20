@@ -147,6 +147,28 @@ class FileShareTest extends TestCase
         Storage::disk('local')->assertExists(
             "uploads/{$user->id}/win-pc-00001-7791/Shared with me/From Test User/document.txt"
         );
+
+        $this->getJson('/api/files?' . http_build_query([
+            'user_id' => (string) $user->id,
+            'device_id' => 'win-pc-00001-7791',
+            'folder_path' => '',
+        ]))
+            ->assertOk()
+            ->assertJsonFragment([
+                'name' => 'Shared with me',
+                'type' => 'folder',
+            ]);
+
+        $this->getJson('/api/files?' . http_build_query([
+            'user_id' => (string) $user->id,
+            'device_id' => 'win-pc-00001-7791',
+            'folder_path' => 'Shared with me/From Test User',
+        ]))
+            ->assertOk()
+            ->assertJsonFragment([
+                'name' => 'document.txt',
+                'type' => 'file',
+            ]);
     }
 
     public function test_file_manager_upload_stores_file(): void
