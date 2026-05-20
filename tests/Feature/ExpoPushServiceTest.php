@@ -88,11 +88,12 @@ class ExpoPushServiceTest extends TestCase
             return $payload['to'] === 'ExponentPushToken[test-token]'
                 && $data['kind'] === 'cloudos_webrtc_call'
                 && $data['callerPhoneNumber'] === ''
-                && $data['callerDeviceNumber'] === 'winpc000011234'
+                && $data['callerDeviceNumber'] === 'win-pc-00001-1234'
+                && $data['callerDeviceNumberNormalized'] === 'winpc000011234'
                 && $data['receiverDeviceNumber'] === '07061080002'
                 && $data['useSystemDialer'] === false
                 && str_contains($data['callUrl'], '/device-call?')
-                && str_contains($data['callUrl'], 'target=winpc000011234');
+                && str_contains($data['callUrl'], 'target=win-pc-00001-1234');
         });
     }
 }

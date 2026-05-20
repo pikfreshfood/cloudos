@@ -252,7 +252,16 @@
         };
 
         function normalizePhone(value) {
-            return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+            const compact = String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+            let match = compact.match(/^(win|mac)pc(\d+)(\d{4})$/);
+            if (match) {
+                return `${match[1]}-pc-${match[2]}-${match[3]}`;
+            }
+            match = compact.match(/^pc(win|mac)(\d+)(\d{4})$/);
+            if (match) {
+                return `pc-${match[1]}-${match[2]}-${match[3]}`;
+            }
+            return compact;
         }
 
         function setStatus(value) {

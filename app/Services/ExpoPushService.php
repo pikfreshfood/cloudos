@@ -35,8 +35,12 @@ class ExpoPushService
                 'action' => 'open_cloudos_call',
                 'callerPhoneNumber' => $callerIsTelephoneNumber ? $this->normalizeTelephoneNumber($callerPhoneNumber) : '',
                 'callerDeviceNumber' => $callerDeviceNumber,
+                'callerDeviceNumberNormalized' => $this->compactCloudNumber($callerDeviceNumber),
+                'callerDeviceNumberAliases' => $this->numberAliases($callerDeviceNumber),
                 'callerCloudNumber' => $callerDeviceNumber,
                 'receiverDeviceNumber' => $receiverDeviceNumber,
+                'receiverDeviceNumberNormalized' => $this->compactCloudNumber($receiverDeviceNumber),
+                'receiverDeviceNumberAliases' => $this->numberAliases($receiverDeviceNumber),
                 'receiverCloudNumber' => $receiverDeviceNumber,
                 'callType' => $callType,
                 'callUrl' => $callUrl,
@@ -202,7 +206,7 @@ class ExpoPushService
     private function tokensForPhoneNumber(string $phoneNumber)
     {
         $tokens = DB::table('devices')
-            ->where('phone_number', $phoneNumber)
+            ->whereIn('phone_number', $this->numberAliases($phoneNumber))
             ->whereNotNull('push_token')
             ->pluck('push_token');
 
@@ -229,7 +233,37 @@ class ExpoPushService
 
     private function normalizeCloudNumber(string $value): string
     {
+        $compact = $this->compactCloudNumber($value);
+        if (preg_match('/^(win|mac)pc(\d+)(\d{4})$/', $compact, $matches)) {
+            return "{$matches[1]}-pc-{$matches[2]}-{$matches[3]}";
+        }
+        if (preg_match('/^pc(win|mac)(\d+)(\d{4})$/', $compact, $matches)) {
+            return "pc-{$matches[1]}-{$matches[2]}-{$matches[3]}";
+        }
+        return $compact;
+    }
+
+    private function compactCloudNumber(string $value): string
+    {
         return strtolower(preg_replace('/[^A-Za-z0-9]+/', '', trim($value)) ?? '');
+    }
+
+    private function numberAliases(string $value): array
+    {
+        $canonical = $this->normalizeCloudNumber($value);
+        $compact = $this->compactCloudNumber($canonical);
+        $aliases = [$canonical, $compact];
+
+        if (preg_match('/^(win|mac)-pc-(\d+)-(\d{4})$/', $canonical, $matches)) {
+            $aliases[] = "pc-{$matches[1]}-{$matches[2]}-{$matches[3]}";
+            $aliases[] = "pc{$matches[1]}{$matches[2]}{$matches[3]}";
+        }
+        if (preg_match('/^pc-(win|mac)-(\d+)-(\d{4})$/', $canonical, $matches)) {
+            $aliases[] = "{$matches[1]}-pc-{$matches[2]}-{$matches[3]}";
+            $aliases[] = "{$matches[1]}pc{$matches[2]}{$matches[3]}";
+        }
+
+        return array_values(array_unique(array_filter($aliases)));
     }
 
     private function normalizeTelephoneNumber(string $value): string

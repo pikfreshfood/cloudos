@@ -67,10 +67,11 @@ class SignalController extends Controller
         if ($user === '') {
             return response()->json([]);
         }
+        $userAliases = $this->numberAliases($user);
 
         try {
             $signals = DB::table('signals')
-                ->where('receiver_phone_number', $user)
+                ->whereIn('receiver_phone_number', $userAliases)
                 ->orderBy('id')
                 ->get()
                 ->map(fn ($signal) => $this->mapSignal($signal))
@@ -80,7 +81,7 @@ class SignalController extends Controller
 
             if ($shouldDelete) {
                 DB::table('signals')
-                    ->where('receiver_phone_number', $user)
+                    ->whereIn('receiver_phone_number', $userAliases)
                     ->delete();
             }
         } catch (Throwable) {
@@ -92,7 +93,37 @@ class SignalController extends Controller
 
     private function normalizePhone(string $value): string
     {
+        $compact = strtolower(preg_replace('/[^A-Za-z0-9]+/', '', trim($value)) ?? '');
+        if (preg_match('/^(win|mac)pc(\d+)(\d{4})$/', $compact, $matches)) {
+            return "{$matches[1]}-pc-{$matches[2]}-{$matches[3]}";
+        }
+        if (preg_match('/^pc(win|mac)(\d+)(\d{4})$/', $compact, $matches)) {
+            return "pc-{$matches[1]}-{$matches[2]}-{$matches[3]}";
+        }
+        return $compact;
+    }
+
+    private function compactNumber(string $value): string
+    {
         return strtolower(preg_replace('/[^A-Za-z0-9]+/', '', trim($value)) ?? '');
+    }
+
+    private function numberAliases(string $value): array
+    {
+        $canonical = $this->normalizePhone($value);
+        $compact = $this->compactNumber($canonical);
+        $aliases = [$canonical, $compact];
+
+        if (preg_match('/^(win|mac)-pc-(\d+)-(\d{4})$/', $canonical, $matches)) {
+            $aliases[] = "pc-{$matches[1]}-{$matches[2]}-{$matches[3]}";
+            $aliases[] = "pc{$matches[1]}{$matches[2]}{$matches[3]}";
+        }
+        if (preg_match('/^pc-(win|mac)-(\d+)-(\d{4})$/', $canonical, $matches)) {
+            $aliases[] = "{$matches[1]}-pc-{$matches[2]}-{$matches[3]}";
+            $aliases[] = "{$matches[1]}pc{$matches[2]}{$matches[3]}";
+        }
+
+        return array_values(array_unique(array_filter($aliases)));
     }
 
     private function mapSignal(object $signal): array
@@ -123,7 +154,11 @@ class SignalController extends Controller
             'kind' => 'cloudos_webrtc_call',
             'action' => 'open_cloudos_call',
             'callerDeviceNumber' => $signal->sender_phone_number,
+            'callerDeviceNumberNormalized' => $this->compactNumber($signal->sender_phone_number),
+            'callerDeviceNumberAliases' => $this->numberAliases($signal->sender_phone_number),
             'receiverDeviceNumber' => $signal->receiver_phone_number,
+            'receiverDeviceNumberNormalized' => $this->compactNumber($signal->receiver_phone_number),
+            'receiverDeviceNumberAliases' => $this->numberAliases($signal->receiver_phone_number),
             'callType' => $callType,
             'callUrl' => $callUrl,
             'url' => $callUrl,
