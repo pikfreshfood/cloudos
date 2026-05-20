@@ -18,6 +18,9 @@ class ExpoPushService
         $receiverDeviceNumber = $this->normalizeCloudNumber($receiverPhoneNumber);
         $callerDeviceNumber = $this->normalizeCloudNumber($callerPhoneNumber);
         $callerIsTelephoneNumber = $this->isTelephoneNumber($callerPhoneNumber);
+        $callerCallbackNumber = $callerIsTelephoneNumber
+            ? $this->normalizeTelephoneNumber($callerPhoneNumber)
+            : $callerDeviceNumber;
         $callUrl = $this->deviceCallUrl($receiverDeviceNumber, $callerDeviceNumber, $callType);
         $callerLabel = $callerIsTelephoneNumber ? $callerPhoneNumber : "Cloud OS device {$callerDeviceNumber}";
 
@@ -33,7 +36,13 @@ class ExpoPushService
             'data' => [
                 'kind' => 'cloudos_webrtc_call',
                 'action' => 'open_cloudos_call',
-                'callerPhoneNumber' => $callerIsTelephoneNumber ? $this->normalizeTelephoneNumber($callerPhoneNumber) : '',
+                'callerPhoneNumber' => $callerCallbackNumber,
+                'callerNumber' => $callerCallbackNumber,
+                'phoneNumber' => $callerCallbackNumber,
+                'senderPhoneNumber' => $callerCallbackNumber,
+                'sender_phone_number' => $callerCallbackNumber,
+                'senderDeviceNumber' => $callerDeviceNumber,
+                'displayNumber' => $callerCallbackNumber,
                 'callerDeviceNumber' => $callerDeviceNumber,
                 'callerDeviceNumberNormalized' => $this->compactCloudNumber($callerDeviceNumber),
                 'callerDeviceNumberAliases' => $this->numberAliases($callerDeviceNumber),

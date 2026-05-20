@@ -47,7 +47,7 @@ class ContactController extends Controller
             'phone_number' => ['required', 'string', 'max:50'],
         ]);
 
-        $validated['phone_number'] = preg_replace('/\D+/', '', trim($validated['phone_number'])) ?? '';
+        $validated['phone_number'] = $this->normalizeCloudNumber((string) $validated['phone_number']);
 
         if ($validated['phone_number'] === '') {
             return response()->json([
@@ -59,6 +59,9 @@ class ContactController extends Controller
         }
 
         $linkedDevice = $this->findDeviceByPhoneNumber($validated['phone_number']);
+        if ($linkedDevice) {
+            $validated['phone_number'] = (string) $linkedDevice->phone_number;
+        }
         $linkedUser = $linkedDevice
             ? User::find($linkedDevice->user_id)
             : User::query()
@@ -161,7 +164,7 @@ class ContactController extends Controller
             'phone_number' => ['required', 'string', 'max:50'],
         ]);
 
-        $validated['phone_number'] = preg_replace('/\D+/', '', trim($validated['phone_number'])) ?? '';
+        $validated['phone_number'] = $this->normalizeCloudNumber((string) $validated['phone_number']);
 
         if ($validated['phone_number'] === '') {
             return response()->json([
@@ -173,10 +176,11 @@ class ContactController extends Controller
         }
 
         $linkedDevice = $this->findDeviceByPhoneNumber($validated['phone_number']);
+        $lookupPhoneNumber = $linkedDevice ? (string) $linkedDevice->phone_number : $validated['phone_number'];
         $user = $linkedDevice
             ? User::find($linkedDevice->user_id)
             : User::query()
-            ->where('phone_number', $validated['phone_number'])
+            ->where('phone_number', $lookupPhoneNumber)
             ->first();
 
         return response()->json([
@@ -216,16 +220,76 @@ class ContactController extends Controller
             return null;
         }
 
+        $aliases = $this->numberAliases($phoneNumber);
         $digits = preg_replace('/\D+/', '', $phoneNumber) ?? '';
 
-        if ($digits === '') {
+        if (empty($aliases) && $digits === '') {
             return null;
         }
 
-        return DB::table('devices')
-            ->where('phone_number', $phoneNumber)
-            ->orWhere('phone_number', $digits)
+        $device = DB::table('devices')
+            ->whereIn('phone_number', $aliases)
             ->first();
+
+        if ($device || $digits === '') {
+            return $device;
+        }
+
+        $allDevices = DB::table('devices')
+            ->whereNotNull('phone_number')
+            ->get();
+
+        foreach ($allDevices as $candidate) {
+            $candidateDigits = preg_replace('/\D+/', '', (string) $candidate->phone_number) ?? '';
+
+            if ($candidateDigits === '') {
+                continue;
+            }
+
+            if ($candidateDigits === $digits || str_contains($candidateDigits, $digits) || str_contains($digits, $candidateDigits)) {
+                if (strlen($candidateDigits) >= 7 && strlen($digits) >= 7) {
+                    return $candidate;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private function normalizeCloudNumber(string $value): string
+    {
+        $compact = $this->compactCloudNumber($value);
+        if (preg_match('/^(win|mac)pc(\d+)(\d{4})$/', $compact, $matches)) {
+            return "{$matches[1]}-pc-{$matches[2]}-{$matches[3]}";
+        }
+        if (preg_match('/^pc(win|mac)(\d+)(\d{4})$/', $compact, $matches)) {
+            return "pc-{$matches[1]}-{$matches[2]}-{$matches[3]}";
+        }
+        return $compact;
+    }
+
+    private function compactCloudNumber(string $value): string
+    {
+        return strtolower(preg_replace('/[^A-Za-z0-9]+/', '', trim($value)) ?? '');
+    }
+
+    private function numberAliases(string $value): array
+    {
+        $canonical = $this->normalizeCloudNumber($value);
+        $compact = $this->compactCloudNumber($canonical);
+        $digits = preg_replace('/\D+/', '', $canonical) ?? '';
+        $aliases = [$canonical, $compact, $digits];
+
+        if (preg_match('/^(win|mac)-pc-(\d+)-(\d{4})$/', $canonical, $matches)) {
+            $aliases[] = "pc-{$matches[1]}-{$matches[2]}-{$matches[3]}";
+            $aliases[] = "pc{$matches[1]}{$matches[2]}{$matches[3]}";
+        }
+        if (preg_match('/^pc-(win|mac)-(\d+)-(\d{4})$/', $canonical, $matches)) {
+            $aliases[] = "{$matches[1]}-pc-{$matches[2]}-{$matches[3]}";
+            $aliases[] = "{$matches[1]}pc{$matches[2]}{$matches[3]}";
+        }
+
+        return array_values(array_unique(array_filter($aliases)));
     }
 
     private function findDeviceByDeviceId(string $deviceId): ?object
