@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\PaystackTransaction;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -37,6 +38,7 @@ class PaystackPaymentController extends Controller
         ]);
 
         $this->ensurePaystackConfigured();
+        $this->ensurePaystackTransactionsStorage();
 
         $priceNgn = self::STORAGE_PRICES_NGN[$validated['storage_mb']] ?? null;
         if ($priceNgn === null) {
@@ -111,6 +113,7 @@ class PaystackPaymentController extends Controller
         ]);
 
         $this->ensurePaystackConfigured();
+        $this->ensurePaystackTransactionsStorage();
 
         $transaction = PaystackTransaction::query()
             ->where('reference', $validated['reference'])
@@ -203,6 +206,62 @@ class PaystackPaymentController extends Controller
             503,
             'Paystack is not configured yet.'
         );
+    }
+
+    private function ensurePaystackTransactionsStorage(): void
+    {
+        if (! Schema::hasTable('paystack_transactions')) {
+            Schema::create('paystack_transactions', function (Blueprint $table) {
+                $table->id();
+                $table->string('reference')->unique();
+                $table->string('email');
+                $table->string('user_id');
+                $table->string('device_id');
+                $table->string('device_name');
+                $table->unsignedInteger('storage_mb');
+                $table->string('billing_period', 20)->default('yearly');
+                $table->unsignedInteger('amount_kobo');
+                $table->string('status')->default('initialized');
+                $table->text('authorization_url')->nullable();
+                $table->string('access_code')->nullable();
+                $table->text('callback_url')->nullable();
+                $table->json('metadata')->nullable();
+                $table->json('verified_payload')->nullable();
+                $table->timestamp('paid_at')->nullable();
+                $table->timestamp('storage_expires_at')->nullable();
+                $table->timestamps();
+            });
+
+            return;
+        }
+
+        $columns = Schema::getColumnListing('paystack_transactions');
+
+        Schema::table('paystack_transactions', function (Blueprint $table) use ($columns) {
+            if (! in_array('billing_period', $columns, true)) {
+                $table->string('billing_period', 20)->default('yearly');
+            }
+
+            if (! in_array('storage_expires_at', $columns, true)) {
+                $table->timestamp('storage_expires_at')->nullable();
+            }
+
+            if (! in_array('callback_url', $columns, true)) {
+                $table->text('callback_url')->nullable();
+            }
+
+            if (! in_array('metadata', $columns, true)) {
+                $table->json('metadata')->nullable();
+            }
+
+            if (! in_array('verified_payload', $columns, true)) {
+                $table->json('verified_payload')->nullable();
+            }
+
+            if (! in_array('paid_at', $columns, true)) {
+                $table->timestamp('paid_at')->nullable();
+            }
+        });
     }
 
     private function activateDeviceStorage(PaystackTransaction $transaction, Carbon $storageExpiresAt): void
